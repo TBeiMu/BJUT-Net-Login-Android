@@ -56,6 +56,10 @@ android {
     }
     lint {
         warningsAsErrors = true
+        // v0.1.0 pins targetSdk 36. New target SDKs change runtime behavior and
+        // require separate compatibility testing; retain this upgrade advisory
+        // without making CI depend on the runner's installed SDK inventory.
+        informational += "OldTargetApi"
         // Versions are intentionally pinned as a compatible set. Upgrade advisories
         // are reviewed separately; all correctness, security and accessibility checks remain enabled.
         disable += setOf("GradleDependency", "AndroidGradlePluginVersion", "NewerVersionAvailable")
