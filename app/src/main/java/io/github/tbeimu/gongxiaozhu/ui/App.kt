@@ -154,7 +154,7 @@ private fun Home(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onAcc
             Column(Modifier.fillMaxWidth().padding(26.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("校园网助手", style = MaterialTheme.typography.labelLarge)
                 Text(if (data.accounts.isEmpty()) "先保存你的账号" else "账号已准备就绪", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("连接校园 WiFi 后，使用默认账号检查并完成认证。真实校园接口待实测确认。")
+                Text("连接校园 WiFi 后，使用默认账号检查并完成认证。")
                 Button(onClick = if (data.accounts.isEmpty()) onAdd else onAccounts) {
                     Text(if (data.accounts.isEmpty()) "添加校园网账号" else "管理账号")
                 }

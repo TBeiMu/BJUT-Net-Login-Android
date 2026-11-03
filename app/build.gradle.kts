@@ -5,6 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val releaseKeystorePath = providers.environmentVariable("GXZ_SIGNING_KEYSTORE_PATH").orNull
+
 android {
     namespace = "io.github.tbeimu.gongxiaozhu"
     compileSdk = 36
@@ -14,9 +16,24 @@ android {
         applicationId = "io.github.tbeimu.gongxiaozhu"
         minSdk = 31
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.0-stage3.1"
+        versionCode = 4
+        versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (!releaseKeystorePath.isNullOrBlank()) {
+            create("production") {
+                storeFile = file(releaseKeystorePath)
+                storeType = "PKCS12"
+                storePassword = providers.environmentVariable("GXZ_SIGNING_STORE_PASSWORD").orNull
+                    ?: error("缺少正式签名存储口令")
+                keyAlias = providers.environmentVariable("GXZ_SIGNING_KEY_ALIAS").orNull
+                    ?: error("缺少正式签名别名")
+                keyPassword = providers.environmentVariable("GXZ_SIGNING_KEY_PASSWORD").orNull
+                    ?: error("缺少正式签名密钥口令")
+            }
+        }
     }
 
     buildTypes {
@@ -24,6 +41,7 @@ android {
             applicationIdSuffix = ".debug"
         }
         release {
+            signingConfig = signingConfigs.findByName("production")
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
