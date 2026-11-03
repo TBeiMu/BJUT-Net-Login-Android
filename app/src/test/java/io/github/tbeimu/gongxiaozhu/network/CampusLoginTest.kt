@@ -131,6 +131,53 @@ class CampusLoginTest {
         assertEquals(1, transport.requests.size)
     }
 
+    @Test fun dormSecondStageTimeoutPreservesConfirmedGatewayState() = runTest {
+        val requests = mutableListOf<PortalEndpoint>()
+        val transport = PortalTransport { request ->
+            requests += request.endpoint
+            when (request.endpoint) {
+                PortalEndpoint.DORM_STATUS -> online
+                PortalEndpoint.IPV4_STATUS -> ipv4Offline
+                PortalEndpoint.IPV4_LOGIN -> awaitCancellation()
+                else -> error("Unexpected request")
+            }
+        }
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertTrue(result.message.contains("第一阶段已认证"))
+        assertTrue(result.message.contains("超时"))
+        assertEquals(NetworkMode.DORM_WIFI, result.mode)
+        assertEquals(listOf(PortalEndpoint.DORM_STATUS, PortalEndpoint.IPV4_STATUS, PortalEndpoint.IPV4_LOGIN), requests)
+    }
+
+    @Test fun dormSecondStageConnectionErrorPreservesNewlyConfirmedGateway() = runTest {
+        var gatewayChecks = 0
+        val requests = mutableListOf<PortalEndpoint>()
+        val transport = PortalTransport { request ->
+            requests += request.endpoint
+            when (request.endpoint) {
+                PortalEndpoint.DORM_STATUS -> if (++gatewayChecks == 1) offline else online
+                PortalEndpoint.DORM_LOGIN -> online
+                PortalEndpoint.IPV4_STATUS -> ipv4Offline
+                PortalEndpoint.IPV4_LOGIN -> throw PortalException(PortalProblem.CONNECTION)
+                else -> error("Unexpected request")
+            }
+        }
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertTrue(result.message.contains("第一阶段已认证"))
+        assertTrue(result.message.contains("无法连接"))
+        assertEquals(NetworkMode.DORM_WIFI, result.mode)
+        assertEquals(1, requests.count { it == PortalEndpoint.DORM_LOGIN })
+        assertEquals(1, requests.count { it == PortalEndpoint.IPV4_LOGIN })
+    }
+
+    @Test fun unconfirmedDormGatewayMustNotBeReportedAsCompleted() = runTest {
+        val transport = Script(offline, ipv4Offline, online, offline)
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertEquals(PortalProblem.UNCONFIRMED.hint, result.message)
+        assertEquals(NetworkMode.DORM_WIFI, result.mode)
+        assertFalse(transport.endpoints.contains(PortalEndpoint.IPV4_LOGIN))
+    }
+
     @Test fun flowTimeoutAndConnectionFailureUseSafeMessages() = runTest {
         val blocked = PortalTransport { awaitCancellation() }
         assertEquals(PortalProblem.CONNECTION.hint, CampusLogin().login(blocked, NetworkMode.PUBLIC_WIFI, { account }, {}).message)

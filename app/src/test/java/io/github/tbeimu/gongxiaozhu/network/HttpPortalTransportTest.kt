@@ -85,6 +85,22 @@ class HttpPortalTransportTest {
         assertEquals(1, server.requestCount)
     }
 
+    @Test fun serviceUnavailableMustNotAutomaticallyResubmitCredentials() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0"))
+        server.enqueue(MockResponse().setBody("{\"result\":1}"))
+        assertEquals(PortalProblem.CONNECTION, failure(PortalRequest(PortalEndpoint.PUBLIC_LOGIN,
+            listOf("upass" to "demo-secret"))).problem)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun serviceUnavailableMustNotAutomaticallyRepeatPostLogin() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0"))
+        server.enqueue(MockResponse().setBody("<!--Dr.COMWebLoginID_3.htm-->"))
+        assertEquals(PortalProblem.CONNECTION, failure(PortalRequest(PortalEndpoint.IPV4_LOGIN,
+            listOf("upass" to "demo-secret"))).problem)
+        assertEquals(1, server.requestCount)
+    }
+
     @Test fun oversizedAndChunkedResponsesAreBounded() = runBlocking {
         server.enqueue(MockResponse().setBody("x".repeat(128 * 1024 + 1)))
         assertEquals(PortalProblem.RESPONSE, failure(PortalRequest(PortalEndpoint.PUBLIC_STATUS)).problem)

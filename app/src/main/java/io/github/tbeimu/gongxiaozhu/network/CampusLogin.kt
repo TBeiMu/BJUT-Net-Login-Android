@@ -16,18 +16,21 @@ fun interface CampusAuthenticator {
 /** Recognition and preflight never send credentials. One snapshot is reused by both dorm stages. */
 class CampusLogin : CampusAuthenticator {
     override suspend fun login(transport: PortalTransport, mode: NetworkMode, credentials: suspend () -> AccountDraft?,
-        progress: (String) -> Unit): LoginResult = try {
-        withTimeout(45_000) { authenticate(transport, mode, credentials, progress) }
-    } catch (_: TimeoutCancellationException) {
-        LoginResult(PortalProblem.CONNECTION.hint)
-    } catch (error: CancellationException) {
-        throw error
-    } catch (error: PortalException) {
-        LoginResult(error.problem.hint)
+        progress: (String) -> Unit): LoginResult {
+        val confirmed = ConfirmedState()
+        return try {
+            withTimeout(45_000) { authenticate(transport, mode, credentials, progress, confirmed) }
+        } catch (_: TimeoutCancellationException) {
+            confirmed.failure(PortalProblem.CONNECTION)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: PortalException) {
+            confirmed.failure(error.problem)
+        }
     }
 
     private suspend fun authenticate(transport: PortalTransport, mode: NetworkMode, credentials: suspend () -> AccountDraft?,
-        progress: (String) -> Unit): LoginResult {
+        progress: (String) -> Unit, confirmed: ConfirmedState): LoginResult {
         progress("正在检查校园认证状态…")
         var publicStatus: Boolean? = null
         var dormStatus: Boolean? = null
@@ -43,11 +46,13 @@ class CampusLogin : CampusAuthenticator {
             }
         } else mode
 
+        confirmed.mode = selected
         val gatewayStatus = when (selected) {
             NetworkMode.PUBLIC_WIFI -> publicStatus ?: requiredStatus(transport, PortalEndpoint.PUBLIC_STATUS)
             NetworkMode.DORM_WIFI -> dormStatus ?: requiredStatus(transport, PortalEndpoint.DORM_STATUS)
             NetworkMode.AUTO -> error("Explicit mode required")
         }
+        confirmed.dormGatewayOnline = selected == NetworkMode.DORM_WIFI && gatewayStatus
         if (selected == NetworkMode.PUBLIC_WIFI && gatewayStatus) return LoginResult("公共 WiFi 已认证，无需重复登录", selected)
 
         // Query lgn again after the first stage if it was previously unreachable.
@@ -62,6 +67,7 @@ class CampusLogin : CampusAuthenticator {
             if (!PortalParser.result(transport.execute(request))) throw PortalException(PortalProblem.REJECTED)
             val statusEndpoint = if (selected == NetworkMode.PUBLIC_WIFI) PortalEndpoint.PUBLIC_STATUS else PortalEndpoint.DORM_STATUS
             if (!requiredStatus(transport, statusEndpoint)) throw PortalException(PortalProblem.UNCONFIRMED)
+            confirmed.dormGatewayOnline = selected == NetworkMode.DORM_WIFI
         }
         if (selected == NetworkMode.DORM_WIFI) {
             progress("宿舍第一阶段已认证，正在检查 IPv4 二次认证…")
@@ -106,4 +112,15 @@ class CampusLogin : CampusAuthenticator {
         "DDDDD" to account.username, "upass" to account.password, "v46s" to "1",
         "v6ip" to "", "f4serip" to "172.30.201.2", "0MKKey" to "",
     ))
+
+    private class ConfirmedState {
+        var mode: NetworkMode? = null
+        var dormGatewayOnline = false
+
+        fun failure(problem: PortalProblem) = LoginResult(
+            if (dormGatewayOnline) "宿舍第一阶段已认证，IPv4 二次认证未完成：${problem.hint}"
+            else problem.hint,
+            mode = mode,
+        )
+    }
 }

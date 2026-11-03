@@ -48,6 +48,16 @@ internal fun portalClientBuilder() = OkHttpClient.Builder()
     .followRedirects(false)
     .followSslRedirects(false)
     .retryOnConnectionFailure(false)
+    .addNetworkInterceptor { chain ->
+        val response = chain.proceed(chain.request())
+        // OkHttp can retry HTTP 503 + Retry-After: 0 even with connection retries disabled.
+        // Stop before its follow-up logic can submit credentials for a second time.
+        if (response.code == 503) {
+            response.close()
+            throw IOException("校园认证服务暂不可用")
+        }
+        response
+    }
     .connectTimeout(5, TimeUnit.SECONDS)
     .readTimeout(5, TimeUnit.SECONDS)
     .callTimeout(8, TimeUnit.SECONDS)

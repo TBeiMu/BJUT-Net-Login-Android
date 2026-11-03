@@ -18,6 +18,13 @@ class WifiConnection(val key: String, val transport: PortalTransport) {
     override fun toString() = "WifiConnection(network=<bound>)"
 }
 
+// VPNs can advertise their underlying WiFi transport. Only bind physical WiFi.
+internal fun isPhysicalWifi(capabilities: NetworkCapabilities?): Boolean =
+    capabilities?.let { isPhysicalWifi(it::hasTransport) } ?: false
+
+internal fun isPhysicalWifi(hasTransport: (Int) -> Boolean): Boolean =
+    hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && !hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+
 /** Observes physical WiFi, including unvalidated captive networks; never requests/connects WiFi. */
 class WifiMonitor(context: Context) {
     private val manager = context.applicationContext.getSystemService(ConnectivityManager::class.java)
@@ -27,7 +34,7 @@ class WifiMonitor(context: Context) {
         val networks = linkedMapOf<Network, LinkProperties?>()
         @Suppress("DEPRECATION")
         manager.allNetworks.forEach { network ->
-            if (manager.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
+            if (isPhysicalWifi(manager.getNetworkCapabilities(network))) {
                 networks[network] = manager.getLinkProperties(network)
             }
         }
@@ -52,7 +59,7 @@ class WifiMonitor(context: Context) {
             }
             override fun onLost(network: Network) { networks.remove(network); publish() }
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                if (!networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                if (!isPhysicalWifi(networkCapabilities)) {
                     networks.remove(network)
                     publish()
                 }
@@ -62,7 +69,8 @@ class WifiMonitor(context: Context) {
                 publish()
             }
         }
-        val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
+        val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build()
         manager.registerNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
         publish()
         awaitClose { manager.unregisterNetworkCallback(callback) }
