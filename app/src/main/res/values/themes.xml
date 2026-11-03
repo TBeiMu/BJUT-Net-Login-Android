@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.GongXiaoZhu" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#F5F8F6</item>
+    </style>
+</resources>
