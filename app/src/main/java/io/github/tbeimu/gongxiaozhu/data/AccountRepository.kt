@@ -62,6 +62,7 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
 
     @Synchronized
     fun edit(id: String): AccountDraft {
+        checkPersistedState()
         val saved = requireLoaded().accounts.find { it.id == id }
             ?: throw AccountValidationException("账号不存在，请返回后重试")
         return AccountDraft(saved.id, saved.label, saved.username, saved.password)
@@ -98,20 +99,10 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
 
     private fun persist(next: VaultData): AccountState = guarded {
         validateVault(next)
-        val previous = store.read()
-        require(!hasPersistedVault || previous != null)
-        if (previous != null) {
-            // Detect corruption or a lost key even when the app already has accounts in memory.
-            val checked = cipher.decrypt(previous)
-            try {
-                validateVault(json.decodeFromString<VaultData>(checked.decodeToString(throwOnInvalidSequence = true)))
-            } finally {
-                checked.fill(0)
-            }
-        }
+        checkPersistedState()
         val plaintext = json.encodeToString(next).encodeToByteArray()
         try {
-            val encrypted = cipher.encrypt(plaintext, requireExistingKey = previous != null)
+            val encrypted = cipher.encrypt(plaintext, requireExistingKey = hasPersistedVault)
             require(encrypted.size <= 1024 * 1024)
             store.write(encrypted)
         } finally {
@@ -120,6 +111,22 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
         vault = next
         hasPersistedVault = true
         next.summary()
+    }
+
+    private fun checkPersistedState() = guarded {
+        val previous = store.read()
+        require(hasPersistedVault == (previous != null))
+        if (previous != null) {
+            val checked = cipher.decrypt(previous)
+            try {
+                val persisted = json.decodeFromString<VaultData>(checked.decodeToString(throwOnInvalidSequence = true))
+                validateVault(persisted)
+                // Refuse stale reads/writes if another repository changed valid data.
+                require(persisted == requireLoaded())
+            } finally {
+                checked.fill(0)
+            }
+        }
     }
 
     private fun requireLoaded(): VaultData = vault ?: throw VaultUnavailableException()

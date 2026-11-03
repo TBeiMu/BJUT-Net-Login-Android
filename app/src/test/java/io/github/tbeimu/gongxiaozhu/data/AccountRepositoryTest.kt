@@ -161,6 +161,27 @@ class AccountRepositoryTest {
         assertFalse(SavedAccount("demo-id", "demo", "demo", draft.password).toString().contains(draft.password))
     }
 
+    @Test fun editingAfterCorruptionOrKeyLossDoesNotExposeCachedCredentials() {
+        val id = repository.save(draft("student-demo-01")).defaultAccountId!!
+        val original = store.bytes!!.copyOf()
+        store.bytes = byteArrayOf(1, 2, 3)
+        assertThrows(VaultUnavailableException::class.java) { repository.edit(id) }
+        store.bytes = original
+        keys.key = null
+        assertThrows(VaultUnavailableException::class.java) { repository.edit(id) }
+        assertArrayEquals(original, store.bytes)
+    }
+
+    @Test fun staleRepositoryCannotOverwriteNewerValidAccounts() {
+        val original = repository.save(draft("student-demo-01"))
+        val other = AccountRepository(store, cipher)
+        other.load()
+        val updated = other.save(draft("student-demo-02"))
+        assertThrows(VaultUnavailableException::class.java) { repository.settings(AppSettings(false)) }
+        assertThrows(VaultUnavailableException::class.java) { repository.edit(original.defaultAccountId!!) }
+        assertEquals(updated, repository.load())
+    }
+
     private fun draft(username: String) = AccountDraft(label = "测试账号", username = username, password = "demo-only-password")
 
     private class MemoryStore : VaultStore {

@@ -64,6 +64,8 @@ class AppViewModel(private val repository: AccountRepository) : ViewModel() {
                 mutable.update { it.copy(busy = false, editor = draft, editorError = null) }
             } catch (error: CancellationException) {
                 throw error
+            } catch (_: VaultUnavailableException) {
+                mutable.update { it.copy(busy = false, storageBlocked = true, editor = null, editorError = null, message = null) }
             } catch (_: Exception) {
                 mutable.update { it.copy(busy = false, message = "账号暂时无法读取，请重试") }
             }

@@ -95,7 +95,7 @@ fun GongXiaoZhuApp(model: AppViewModel) = GongXiaoZhuTheme {
     ) { padding ->
         when {
             state.loading -> Box(Modifier.fillMaxSize().padding(padding), Alignment.Center) { CircularProgressIndicator() }
-            state.storageBlocked -> Column(Modifier.padding(padding).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            state.storageBlocked -> Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 Heading("账号存储暂不可用", "请检查本机账号存储")
                 Text("账号文件可能损坏，或加密密钥不可用。可以先重试；清除本机数据后，需要重新录入全部账号。")
                 Button(onClick = model::reload, enabled = !state.busy) { Text("重试读取") }
