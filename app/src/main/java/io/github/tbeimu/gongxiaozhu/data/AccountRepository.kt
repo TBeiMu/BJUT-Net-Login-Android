@@ -68,6 +68,13 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
         return AccountDraft(saved.id, saved.label, saved.username, saved.password)
     }
 
+    /** A validated snapshot of just the selected account for one foreground login. */
+    @Synchronized
+    fun credentialsForLogin(selectedDefaultId: String?): AccountDraft? {
+        checkPersistedState()
+        return selectedDefaultId?.let { edit(it) }
+    }
+
     @Synchronized
     fun delete(id: String): AccountState {
         val current = requireLoaded()

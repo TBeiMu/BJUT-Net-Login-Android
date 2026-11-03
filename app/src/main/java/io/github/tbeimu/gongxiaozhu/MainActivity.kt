@@ -6,12 +6,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.tbeimu.gongxiaozhu.data.createAccountRepository
+import io.github.tbeimu.gongxiaozhu.network.WifiMonitor
 import io.github.tbeimu.gongxiaozhu.ui.AppViewModel
 import io.github.tbeimu.gongxiaozhu.ui.GongXiaoZhuApp
 
 class MainActivity : ComponentActivity() {
+    private lateinit var model: AppViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -19,12 +21,21 @@ class MainActivity : ComponentActivity() {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 require(modelClass.isAssignableFrom(AppViewModel::class.java))
                 @Suppress("UNCHECKED_CAST")
-                return AppViewModel(createAccountRepository(applicationContext)) as T
+                return AppViewModel(createAccountRepository(applicationContext), WifiMonitor(applicationContext)) as T
             }
         }
-        setContent {
-            val model: AppViewModel = viewModel(factory = factory)
-            GongXiaoZhuApp(model)
-        }
+        model = ViewModelProvider(this, factory)[AppViewModel::class.java]
+        setContent { GongXiaoZhuApp(model) }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        model.enterForeground()
+    }
+
+    override fun onStop() {
+        // Rotation retains the same foreground entry and ViewModel, so it cannot auto-retry.
+        if (!isChangingConfigurations) model.leaveForeground()
+        super.onStop()
     }
 }

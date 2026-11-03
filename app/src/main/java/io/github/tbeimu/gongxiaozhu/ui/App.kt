@@ -61,7 +61,6 @@ import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.tbeimu.gongxiaozhu.BuildConfig
 import io.github.tbeimu.gongxiaozhu.data.AccountDraft
-import io.github.tbeimu.gongxiaozhu.data.AccountState
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 
@@ -102,8 +101,9 @@ fun GongXiaoZhuApp(model: AppViewModel) = GongXiaoZhuTheme {
                 OutlinedButton(onClick = { resetting = true }, enabled = !state.busy) { Text("清除本机账号并重新录入") }
             }
             else -> when (tab) {
-                Tab.HOME -> Home(state.data, Modifier.padding(padding), onAdd = model::addAccount,
-                    onAccounts = { tab = Tab.ACCOUNTS })
+                Tab.HOME -> Home(state, Modifier.padding(padding), onAdd = model::addAccount,
+                    onAccounts = { tab = Tab.ACCOUNTS }, onLogin = model::login,
+                    onMode = { model.updateSettings(state.data.settings.copy(networkMode = it)) })
                 Tab.ACCOUNTS -> Accounts(state, Modifier.padding(padding), model::addAccount,
                     model::editAccount, model::setDefault, onDelete = { deleting = it })
                 Tab.SETTINGS -> Settings(state, Modifier.padding(padding), model)
@@ -145,14 +145,16 @@ private fun Panel(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun Home(data: AccountState, modifier: Modifier, onAdd: () -> Unit, onAccounts: () -> Unit) {
+private fun Home(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onAccounts: () -> Unit,
+    onLogin: () -> Unit, onMode: (NetworkMode) -> Unit) {
+    val data = state.data
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Heading("工小助", "让每一次校园连接更简单")
         Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
             Column(Modifier.fillMaxWidth().padding(26.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("校园网助手", style = MaterialTheme.typography.labelLarge)
                 Text(if (data.accounts.isEmpty()) "先保存你的账号" else "账号已准备就绪", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("第二阶段已支持账号管理。校园网自动登录将在下一阶段接入。")
+                Text("连接校园 WiFi 后，使用默认账号检查并完成认证。真实校园接口待实测确认。")
                 Button(onClick = if (data.accounts.isEmpty()) onAdd else onAccounts) {
                     Text(if (data.accounts.isEmpty()) "添加校园网账号" else "管理账号")
                 }
@@ -166,12 +168,22 @@ private fun Home(data: AccountState, modifier: Modifier, onAdd: () -> Unit, onAc
             } ?: Text("尚未设置 · 添加首个账号后将自动设为默认")
             HorizontalDivider()
             Text("网络模式：${data.settings.networkMode.title}")
-            Text("打开 App 自动登录：${if (data.settings.autoLogin) "已开启，待接入" else "已关闭"}")
+            state.login.mode?.let { Text("本次识别：${it.title}") }
+            Text("打开 App 自动登录：${if (data.settings.autoLogin) "已开启" else "已关闭"}")
         }
         Panel {
-            Text("登录功能尚未接入", style = MaterialTheme.typography.titleMedium)
-            Text("此阶段版本不会发送账号密码，也不会发起校园网认证请求。")
-            Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text("立即登录 · 下一阶段开放") }
+            Text(if (state.login.wifiConnected) "WiFi 已连接" else "等待连接 WiFi", style = MaterialTheme.typography.titleMedium)
+            Text(state.login.message, modifier = Modifier.testTag("login_status"))
+            if (state.login.running) CircularProgressIndicator(Modifier.size(24.dp))
+            if (state.login.needsChoice) {
+                Text("选择后会保存网络模式，再点击登录。", style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onMode(NetworkMode.PUBLIC_WIFI) }, enabled = !state.busy) { Text("公共 WiFi") }
+                    OutlinedButton(onClick = { onMode(NetworkMode.DORM_WIFI) }, enabled = !state.busy) { Text("宿舍 WiFi") }
+                }
+            }
+            Button(onClick = onLogin, enabled = !state.busy && !state.login.running,
+                modifier = Modifier.fillMaxWidth().testTag("login_button")) { Text(if (state.login.running) "正在认证…" else "登录 / 重试") }
         }
         Text("账号密码仅加密保存在本机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -216,7 +228,7 @@ private fun Settings(state: AppUiState, modifier: Modifier, model: AppViewModel)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("打开 App 自动登录", style = MaterialTheme.typography.titleMedium)
-                    Text("设置已可保存，登录功能待接入", style = MaterialTheme.typography.bodySmall)
+                    Text("每次进入前台最多尝试一次；失败后手动重试", style = MaterialTheme.typography.bodySmall)
                 }
                 Switch(checked = state.data.settings.autoLogin,
                     onCheckedChange = { model.updateSettings(state.data.settings.copy(autoLogin = it)) }, enabled = !state.busy,
@@ -233,7 +245,7 @@ private fun Settings(state: AppUiState, modifier: Modifier, model: AppViewModel)
                     Text(mode.title)
                 }
             }
-            Text("自动识别将在下一阶段接入，也可预先指定公共或宿舍 WiFi。", style = MaterialTheme.typography.bodySmall)
+            Text("识别有歧义时，请指定当前 WiFi 类型；更改模式后手动登录。", style = MaterialTheme.typography.bodySmall)
         }
         Panel {
             Text("关于工小助", style = MaterialTheme.typography.titleMedium)
@@ -273,7 +285,7 @@ private fun AccountEditor(draft: AccountDraft, busy: Boolean, error: String?, on
                     visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done),
                     trailingIcon = { TextButton(onClick = { visible = !visible }) { Text(if (visible) "隐藏" else "显示") } })
-                Text("仅加密保存在本机，不上传账号。", style = MaterialTheme.typography.bodySmall)
+                Text("账号资料加密保存在本机；登录时仅向学校认证地址提交默认账号。", style = MaterialTheme.typography.bodySmall)
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },

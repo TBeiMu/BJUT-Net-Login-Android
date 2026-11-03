@@ -182,6 +182,18 @@ class AccountRepositoryTest {
         assertEquals(updated, repository.load())
     }
 
+    @Test fun credentialSnapshotContainsOnlyDefaultAndRequiresValidStorage() {
+        assertNull(repository.credentialsForLogin(null))
+        val first = repository.save(draft("student-demo-01")).defaultAccountId!!
+        val second = repository.save(draft("student-demo-02")).accounts.last().id
+        assertEquals(first, repository.credentialsForLogin(first)!!.id)
+        repository.setDefault(second)
+        assertEquals(second, repository.credentialsForLogin(second)!!.id)
+        assertEquals(first, repository.credentialsForLogin(first)!!.id)
+        store.bytes = byteArrayOf(1, 2, 3)
+        assertThrows(VaultUnavailableException::class.java) { repository.credentialsForLogin(second) }
+    }
+
     private fun draft(username: String) = AccountDraft(label = "测试账号", username = username, password = "demo-only-password")
 
     private class MemoryStore : VaultStore {

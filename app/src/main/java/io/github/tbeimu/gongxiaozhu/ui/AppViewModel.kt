@@ -8,6 +8,10 @@ import io.github.tbeimu.gongxiaozhu.data.AccountState
 import io.github.tbeimu.gongxiaozhu.data.AccountValidationException
 import io.github.tbeimu.gongxiaozhu.data.AppSettings
 import io.github.tbeimu.gongxiaozhu.data.VaultUnavailableException
+import io.github.tbeimu.gongxiaozhu.network.CampusLogin
+import io.github.tbeimu.gongxiaozhu.network.ForegroundLoginController
+import io.github.tbeimu.gongxiaozhu.network.LoginUiState
+import io.github.tbeimu.gongxiaozhu.network.WifiMonitor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,15 +28,38 @@ data class AppUiState(
     val message: String? = null,
     val editor: AccountDraft? = null,
     val editorError: String? = null,
+    val login: LoginUiState = LoginUiState(),
 ) {
     override fun toString() = "AppUiState(loading=$loading, busy=$busy, storageBlocked=$storageBlocked)"
 }
 
-class AppViewModel(private val repository: AccountRepository) : ViewModel() {
+class AppViewModel(private val repository: AccountRepository, wifiMonitor: WifiMonitor) : ViewModel() {
     private val mutable = MutableStateFlow(AppUiState())
     val state = mutable.asStateFlow()
 
-    init { reload() }
+    private val loginController = ForegroundLoginController(viewModelScope, CampusLogin(),
+        credentials = {
+            val selectedDefaultId = state.value.data.defaultAccountId
+            suspend { withContext(Dispatchers.IO) { repository.credentialsForLogin(selectedDefaultId) } }
+        },
+        publish = { login -> mutable.update { it.copy(login = login) } },
+        storageFailure = { mutable.update { it.copy(storageBlocked = true, editor = null, editorError = null) } })
+
+    init {
+        reload()
+        viewModelScope.launch { wifiMonitor.connections.collect { loginController.wifiChanged(it) } }
+        viewModelScope.launch {
+            state.collect {
+                loginController.configure(ready = !it.loading && !it.storageBlocked,
+                    automatic = it.data.settings.autoLogin && it.data.defaultAccount != null,
+                    mode = it.data.settings.networkMode)
+            }
+        }
+    }
+
+    fun enterForeground() = loginController.enterForeground()
+    fun leaveForeground() = loginController.leaveForeground()
+    fun login() { if (!state.value.busy && state.value.editor == null) loginController.login() }
 
     fun reload() {
         if (state.value.busy) return
