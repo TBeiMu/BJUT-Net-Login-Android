@@ -1,0 +1,32 @@
+# Gradle and Kotlin caches
+.gradle/
+.kotlin/
+
+# Android / IDE local configuration
+local.properties
+.idea/
+*.iml
+.externalNativeBuild/
+.cxx/
+captures/
+
+# Build outputs (the Gradle wrapper JAR is intentionally tracked)
+build/
+*.apk
+*.aab
+*.ap_
+
+# Signing keys and local secrets
+*.jks
+*.keystore
+*.p12
+.env
+.env.*
+secrets/
+local/
+
+# Diagnostics and operating-system files
+*.log
+.DS_Store
+Thumbs.db
+Desktop.ini

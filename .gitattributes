@@ -1,0 +1,13 @@
+# Consistent line endings for Android builds on Windows and Linux CI.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets and the Gradle wrapper must not be converted.
+*.jar binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.pdf binary
