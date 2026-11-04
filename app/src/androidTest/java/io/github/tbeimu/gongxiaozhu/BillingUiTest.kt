@@ -16,7 +16,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.github.tbeimu.gongxiaozhu.billing.BillingMetric
 import io.github.tbeimu.gongxiaozhu.billing.BillingSnapshot
 import io.github.tbeimu.gongxiaozhu.billing.BillingUiState
-import io.github.tbeimu.gongxiaozhu.billing.OnlineDevice
+import io.github.tbeimu.gongxiaozhu.billing.BillingParser
 import io.github.tbeimu.gongxiaozhu.data.AccountState
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.ui.AppUiState
@@ -32,9 +32,16 @@ class BillingUiTest {
     @get:Rule val compose = createComposeRule()
     private val account = AccountSummary("fake-id", "模拟资费账号", "billing-demo-only")
     private val data = AccountState(listOf(account), account.id)
-    private val metrics = mapOf("已用流量" to BillingMetric("1234", "MB"), "可用流量" to BillingMetric("5678", "MB"),
-        "消费保护" to BillingMetric("未设置", ""), "账户余额" to BillingMetric("12.3456", "元"))
-    private val device = OnlineDevice("fake-session", "192.0.2.10", "2001:db8::1", "00-11-22-33-44-55", "2026-01-01 10:00:00", 2)
+    // Parse invented server responses on Android itself, exercising the HTML/JSON libraries at minSdk.
+    private val metrics = BillingParser.metrics("""
+        <dl><dt>1234 <small class="unit">MB</small></dt><dd>已用流量</dd></dl>
+        <dl><dt>5678 <small class="unit">MB</small></dt><dd>可用流量</dd></dl>
+        <dl><dt>未设置</dt><dd>消费保护</dd></dl>
+        <dl><dt>12.3456 <small class="unit">元</small></dt><dd>账户余额</dd></dl>
+        <table id="OnlineLisBig"></table>
+    """.trimIndent())
+    private val device = BillingParser.devices("""[{"sessionId":"fake-session", "ip":"192.0.2.10", "ipv6":"2001:db8::1",
+        "mac":"00-11-22-33-44-55", "loginTime":"2026-01-01 10:00:00", "useTime":120}]""").single()
 
     @Test fun cardsShowRealStateAndOfflineClickSelectsOnlyOneDevice() {
         var selected: String? = null
