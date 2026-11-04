@@ -69,12 +69,42 @@ class HttpPortalTransportTest {
     @Test fun connectivityCheckRejectsCaptivePagesRedirectsAndHttpErrors() = runBlocking {
         val checker = HttpPortalTransport(client, client)
         server.enqueue(MockResponse().setBody("<html>login required</html>"))
+        server.enqueue(MockResponse().setBody("<html>login required</html>"))
         assertFalse(checker.hasIpv4Internet())
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", server.url("/login")))
         server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", server.url("/login")))
         assertFalse(checker.hasIpv4Internet())
         server.enqueue(MockResponse().setResponseCode(500))
+        server.enqueue(MockResponse().setResponseCode(500))
         assertFalse(checker.hasIpv4Internet())
-        assertEquals(3, server.requestCount)
+        assertEquals(6, server.requestCount)
+        assertTrue(originalRequests.none { it.url.host == server.hostName })
+    }
+
+    @Test fun failedPrimaryUsesOnlyFixedHttpsBackupOnSameBoundFactoryWithoutCredentials() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "https://example.org/captive"))
+        server.enqueue(MockResponse().setResponseCode(204))
+        assertTrue(HttpPortalTransport(client, client).hasIpv4Internet())
+        assertEquals(listOf("connectivitycheck.platform.hicloud.com", "connect.rom.miui.com"), originalRequests.map { it.url.host })
+        originalRequests.forEach { request ->
+            assertEquals("https", request.url.scheme)
+            assertEquals("GET", request.method)
+            assertNull(request.url.query)
+            assertNull(request.body)
+            assertNull(request.header("Cookie"))
+            assertNull(request.header("Authorization"))
+        }
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test fun unreachablePrimaryCanUseBackupButBackupHtmlIsNotConnectivityProof() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setResponseCode(204))
+        assertTrue(HttpPortalTransport(client, client).hasIpv4Internet())
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setBody("<html>ordinary web page</html>"))
+        assertFalse(HttpPortalTransport(client, client).hasIpv4Internet())
+        assertEquals(4, server.requestCount)
     }
 
     @Test fun connectivityCheckNeverFallsBackToUnboundDefaultNetwork() = runBlocking {

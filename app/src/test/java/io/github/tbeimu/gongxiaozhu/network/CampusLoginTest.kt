@@ -137,7 +137,7 @@ class CampusLoginTest {
     }
 
     @Test fun firstStageCanRestoreInternetWithoutSubmittingSecondStage() = runTest {
-        val transport = Script(offline, ipv4Offline, online, online, connectivity = listOf(true))
+        val transport = Script(offline, ipv4Offline, online, online, connectivity = listOf(false, true))
         val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
         assertTrue(result.completed)
         assertTrue(result.message.contains("已联网"))
@@ -192,12 +192,87 @@ class CampusLoginTest {
         assertFalse(transport.endpoints.contains(PortalEndpoint.IPV4_LOGIN))
     }
 
-    @Test fun unconfirmedGatewayNeverUsesInternetAsCampusAuthenticationProof() = runTest {
-        val transport = Script(offline, ipv4Offline, online, offline, connectivity = listOf(true))
+    @Test fun successfulFirstStageWithStaleOfflineStatusShowsWorkingInternetInsteadOfUnconfirmed() = runTest {
+        // Screenshot regression: login accepted, chkstatus still returns 0, but WiFi has internet.
+        val transport = Script(offline, ipv4Offline, online, offline, connectivity = listOf(false, true))
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertInternetOnly(result)
+        assertEquals(1, transport.endpoints.count { it == PortalEndpoint.DORM_LOGIN })
+        assertFalse(transport.endpoints.contains(PortalEndpoint.IPV4_LOGIN))
+    }
+
+    @Test fun retryWithStaleOfflineGatewayChecksInternetBeforeReadingPassword() = runTest {
+        // Screenshot regression: a retry must not submit a duplicate login for already-working WiFi.
+        val transport = Script(offline, connectivity = listOf(true))
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { error("Must not read credentials") }, {})
+        assertInternetOnly(result)
+        assertEquals(listOf(PortalEndpoint.DORM_STATUS), transport.endpoints)
+        assertEquals(1, transport.connectivityChecks)
+    }
+
+    @Test fun duplicateFirstStageRejectionIsReconciledWithWorkingWifi() = runTest {
+        // Internet becomes reachable after the preflight check, while the portal rejects a duplicate.
+        val transport = Script(offline, ipv4Offline, offline, connectivity = listOf(false, true))
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertInternetOnly(result)
+        assertEquals(1, transport.endpoints.count { it == PortalEndpoint.DORM_LOGIN })
+        assertFalse(transport.endpoints.contains(PortalEndpoint.IPV4_LOGIN))
+    }
+
+    @Test fun lostFirstStageReplyIsReconciledWithoutResubmittingCredentials() = runTest {
+        var connectivityChecks = 0
+        val endpoints = mutableListOf<PortalEndpoint>()
+        val transport = object : PortalTransport {
+            override suspend fun hasIpv4Internet() = ++connectivityChecks == 2
+            override suspend fun execute(request: PortalRequest): String {
+                endpoints += request.endpoint
+                return when (request.endpoint) {
+                    PortalEndpoint.DORM_STATUS -> offline
+                    PortalEndpoint.IPV4_STATUS -> ipv4Offline
+                    PortalEndpoint.DORM_LOGIN -> throw PortalException(PortalProblem.CONNECTION)
+                    else -> error("Unexpected request")
+                }
+            }
+        }
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertInternetOnly(result)
+        assertEquals(1, endpoints.count { it == PortalEndpoint.DORM_LOGIN })
+        assertFalse(endpoints.contains(PortalEndpoint.IPV4_LOGIN))
+    }
+
+    @Test fun unknownFirstStageReplyCanBeConfirmedByInternetWithoutClaimingStageAuthentication() = runTest {
+        val transport = Script(offline, ipv4Offline, "<html>changed login reply</html>", connectivity = listOf(false, true))
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertInternetOnly(result)
+        assertEquals(1, transport.endpoints.count { it == PortalEndpoint.DORM_LOGIN })
+        assertFalse(transport.endpoints.contains(PortalEndpoint.IPV4_LOGIN))
+    }
+
+    @Test fun workingInternetWithoutRecognizedCampusEndpointsDoesNotSelectDormOrReadPassword() = runTest {
+        val transport = Script("<html>ordinary router</html>", "<html>unrecognized portal</html>", connectivity = listOf(true))
+        val result = CampusLogin().login(transport, NetworkMode.AUTO, { error("Must not read credentials") }, {})
+        assertFalse(result.completed)
+        assertNull(result.mode)
+        assertTrue(result.message.contains("未识别"))
+        assertEquals(0, transport.connectivityChecks)
+        assertEquals(listOf(PortalEndpoint.PUBLIC_STATUS, PortalEndpoint.DORM_STATUS), transport.endpoints)
+    }
+
+    @Test fun manuallySelectedDormWithoutValidStatusDoesNotUseInternetAsIdentification() = runTest {
+        val transport = Script("<html>unrecognized portal</html>", connectivity = listOf(true))
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { error("Must not read credentials") }, {})
+        assertFalse(result.completed)
+        assertEquals(0, transport.connectivityChecks)
+        assertEquals(listOf(PortalEndpoint.DORM_STATUS), transport.endpoints)
+    }
+
+    @Test fun staleGatewayAndUnavailableInternetKeepUnconfirmedAndNeverSubmitSecondStage() = runTest {
+        val transport = Script(offline, ipv4Offline, online, offline, connectivity = listOf(false, false))
         val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
         assertFalse(result.completed)
         assertEquals(PortalProblem.UNCONFIRMED.hint, result.message)
-        assertEquals(0, transport.connectivityChecks)
+        assertEquals(1, transport.endpoints.count { it == PortalEndpoint.DORM_LOGIN })
+        assertFalse(transport.endpoints.contains(PortalEndpoint.IPV4_LOGIN))
     }
 
     @Test fun cancellationDuringConnectivityCheckStopsBeforeReadingCredentials() = runTest {
@@ -233,6 +308,63 @@ class CampusLoginTest {
         assertTrue(result.message.contains("超时"))
         assertEquals(NetworkMode.DORM_WIFI, result.mode)
         assertEquals(listOf(PortalEndpoint.DORM_STATUS, PortalEndpoint.IPV4_STATUS, PortalEndpoint.IPV4_LOGIN), requests)
+    }
+
+    @Test fun firstStageFlowTimeoutStillReconcilesWorkingWifiOutsideTheAuthenticationDeadline() = runTest {
+        var connectivityChecks = 0
+        var logins = 0
+        val transport = object : PortalTransport {
+            override suspend fun hasIpv4Internet() = ++connectivityChecks == 2
+            override suspend fun execute(request: PortalRequest) = when (request.endpoint) {
+                PortalEndpoint.DORM_STATUS -> offline
+                PortalEndpoint.IPV4_STATUS -> ipv4Offline
+                PortalEndpoint.DORM_LOGIN -> { logins++; awaitCancellation() }
+                else -> error("Unexpected request")
+            }
+        }
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertInternetOnly(result)
+        assertEquals(1, logins)
+        assertEquals(2, connectivityChecks)
+    }
+
+    @Test fun fallbackConnectivityCheckHasDeadlineAndDoesNotHideCallerCancellation() = runTest {
+        var connectivityChecks = 0
+        val transport = object : PortalTransport {
+            override suspend fun hasIpv4Internet(): Boolean {
+                connectivityChecks++
+                if (connectivityChecks == 1) return false
+                awaitCancellation()
+            }
+            override suspend fun execute(request: PortalRequest) = when (request.endpoint) {
+                PortalEndpoint.DORM_STATUS -> offline
+                PortalEndpoint.IPV4_STATUS -> ipv4Offline
+                PortalEndpoint.DORM_LOGIN -> offline
+                else -> error("Unexpected request")
+            }
+        }
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertFalse(result.completed)
+        assertEquals(PortalProblem.REJECTED.hint, result.message)
+        assertEquals(2, connectivityChecks)
+
+        var cancellationChecks = 0
+        val cancelled = object : PortalTransport {
+            override suspend fun hasIpv4Internet(): Boolean {
+                if (++cancellationChecks == 1) return false
+                throw CancellationException("network switched during reconciliation")
+            }
+            override suspend fun execute(request: PortalRequest) = when (request.endpoint) {
+                PortalEndpoint.DORM_STATUS -> offline
+                PortalEndpoint.IPV4_STATUS -> ipv4Offline
+                PortalEndpoint.DORM_LOGIN -> offline
+                else -> error("Unexpected request")
+            }
+        }
+        try {
+            CampusLogin().login(cancelled, NetworkMode.DORM_WIFI, { account }, {})
+            fail("Caller cancellation must propagate from reconciliation")
+        } catch (_: CancellationException) { /* expected */ }
     }
 
     @Test fun dormSecondStageConnectionErrorPreservesNewlyConfirmedGateway() = runTest {
@@ -276,6 +408,17 @@ class CampusLoginTest {
             CampusLogin().login(PortalTransport { throw CancellationException("cancelled") }, NetworkMode.AUTO, { account }, {})
             fail("Cancellation must propagate")
         } catch (_: CancellationException) { /* expected */ }
+    }
+
+    private fun assertInternetOnly(result: LoginResult) {
+        assertTrue(result.completed)
+        assertEquals(NetworkMode.DORM_WIFI, result.mode)
+        assertTrue(result.message.contains("已联网"))
+        assertTrue(result.message.contains("IPv4 已验证"))
+        assertTrue(result.message.contains("未单独确认"))
+        assertFalse(result.message.contains("第一阶段已认证"))
+        assertFalse(result.message.contains("两阶段"))
+        assertFalse(result.message.contains("未通过"))
     }
 
     private class Script(vararg responses: String, connectivity: List<Boolean> = emptyList()) : PortalTransport {

@@ -86,14 +86,17 @@ class HttpPortalTransport(private val calls: Call.Factory, private val ipv4Calls
 
     override suspend fun hasIpv4Internet(): Boolean {
         val factory = ipv4Calls ?: return false
-        return try {
-            // A valid HTTPS 204 proves external reachability, not which portal stage ran.
-            // Never include account data or follow a redirect/captive portal response.
-            val request = Request.Builder().url(IPV4_CHECK_URL)
-                .header("Cache-Control", "no-store").build()
-            executeHttp(request, factory, connectivityCheck = true)
-            true
-        } catch (_: PortalException) { false }
+        for (url in IPV4_CHECK_URLS) {
+            try {
+                // A valid HTTPS 204 proves external reachability, not which portal stage ran.
+                // Never include account data or follow a redirect/captive portal response.
+                val request = Request.Builder().url(url)
+                    .header("Cache-Control", "no-store").build()
+                executeHttp(request, factory, connectivityCheck = true)
+                return true
+            } catch (_: PortalException) { /* Try the other fixed HTTPS service, using the same WiFi. */ }
+        }
+        return false
     }
 
     private suspend fun executeHttp(
@@ -147,6 +150,9 @@ class HttpPortalTransport(private val calls: Call.Factory, private val ipv4Calls
 
     private companion object {
         const val MAX_BODY = 128L * 1024
-        const val IPV4_CHECK_URL = "https://connectivitycheck.platform.hicloud.com/generate_204"
+        val IPV4_CHECK_URLS = listOf(
+            "https://connectivitycheck.platform.hicloud.com/generate_204",
+            "https://connect.rom.miui.com/generate_204",
+        )
     }
 }
