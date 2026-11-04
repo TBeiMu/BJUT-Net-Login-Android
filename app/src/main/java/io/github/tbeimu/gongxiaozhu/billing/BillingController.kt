@@ -145,9 +145,16 @@ class BillingController(
                 emit(state.copy(snapshot = state.snapshot?.copy(devices = state.snapshot!!.devices.filterNot {
                     it.sessionId == confirmation.device.sessionId
                 }), message = "学校已确认设备注销；正在刷新在线信息…"))
-                val selected = credentials(id) ?: throw BillingException(BillingProblem.EXPIRED)
-                val refreshed = try { current.refresh(selected) }
+                val refreshed = try {
+                    val selected = credentials(id) ?: throw BillingException(BillingProblem.EXPIRED)
+                    current.refresh(selected)
+                }
                     catch (error: CancellationException) { throw error }
+                    catch (_: VaultUnavailableException) {
+                        reset("账号存储不可用，刷新已停止", clearData = true)
+                        storageFailure()
+                        null
+                    }
                     catch (_: Exception) { null }
                 if (token == generation) emit(state.copy(running = false, snapshot = refreshed ?: state.snapshot,
                     loadedAt = if (refreshed != null) System.currentTimeMillis() else state.loadedAt,

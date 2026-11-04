@@ -138,6 +138,24 @@ class BillingControllerTest {
         assertEquals(0, fake.offlineCalls)
     }
 
+    @Test fun confirmedOfflineIsNotReportedAsFailureWhenRefreshCannotReadStorage() = runTest {
+        val fake = FakeSession()
+        var reads = 0
+        var blocked = false
+        val states = mutableListOf<BillingUiState>()
+        val controller = BillingController(backgroundScope, {
+            reads++
+            if (reads > 1) throw VaultUnavailableException()
+            draft(it)
+        }, { states += it }, { blocked = true }, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+        controller.requestOffline(demoDevice.sessionId); runCurrent(); controller.confirmOffline(); runCurrent()
+        assertEquals(1, fake.offlineCalls)
+        assertTrue(blocked); assertTrue(fake.closed)
+        assertNull(states.last().snapshot)
+        assertTrue(states.last().message.contains("学校已确认设备注销"))
+    }
+
     @Test fun networkLossDuringOfflineReportsUnconfirmedOutcomeWithoutRepeatingIt() = runTest {
         val fake = FakeSession().apply { onOffline = { awaitCancellation() } }
         val states = mutableListOf<BillingUiState>()
