@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -69,8 +70,10 @@ class AccountUiTest {
             createAccountRepository(compose.activity).load().defaultAccount?.label == "第二测试账号"
         }
         compose.onNodeWithText("设置", substring = false).performClick()
+        waitForEnabled("打开 App 自动登录")
         compose.onNodeWithContentDescription("打开 App 自动登录").assertIsOn().performClick()
         compose.waitUntil(10_000) { !createAccountRepository(compose.activity).load().settings.autoLogin }
+        waitForEnabled("网络模式：宿舍 WiFi")
         compose.onNodeWithContentDescription("网络模式：宿舍 WiFi").performClick()
         compose.waitUntil(10_000) {
             createAccountRepository(compose.activity).load().settings.networkMode == io.github.tbeimu.gongxiaozhu.data.NetworkMode.DORM_WIFI
@@ -84,6 +87,12 @@ class AccountUiTest {
 
     private fun waitFor(text: String) = compose.waitUntil(10_000) {
         compose.onAllNodes(androidx.compose.ui.test.hasText(text)).fetchSemanticsNodes().isNotEmpty()
+    }
+
+    // An encrypted file write can finish before its UI state update. Wait for the controls,
+    // not only for the repository value, before attempting the next settings operation.
+    private fun waitForEnabled(description: String) = compose.waitUntil(10_000) {
+        compose.onAllNodes(hasContentDescription(description) and isEnabled()).fetchSemanticsNodes().isNotEmpty()
     }
 
     private fun openManager() {

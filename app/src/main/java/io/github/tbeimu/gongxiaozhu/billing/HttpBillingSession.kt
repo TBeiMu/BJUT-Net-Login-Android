@@ -121,11 +121,18 @@ class HttpBillingSession(boundClient: OkHttpClient) : BillingSession {
         repeat(5) {
             val response = exchange(next)
             if (response.code in 300..399) {
-                val target = next.url.resolve(response.location.orEmpty()) ?: throw BillingException(BillingProblem.REDIRECT)
+                val location = response.location?.takeIf { it.isNotBlank() }
+                    ?: throw BillingException(BillingProblem.REDIRECT)
+                val target = next.url.resolve(location) ?: throw BillingException(BillingProblem.REDIRECT)
                 validateOrigin(target)
                 val path = target.encodedPath.substringBefore(";jsessionid=")
-                if (path !in listOf("/Self/login", "/Self/", "/Self/dashboard") ||
-                    target.query != null || target.fragment != null ||
+                val loginPage = path == "/Self/login" || path == "/Self/login/"
+                // The school's unauthenticated dashboard redirects to /Self/login/?302=LI.
+                // Accept only that observed marker; arbitrary query parameters stay blocked.
+                val knownQuery = target.query == null || (loginPage && target.querySize == 1 &&
+                    target.queryParameterNames == setOf("302") && target.queryParameter("302") == "LI")
+                if ((!loginPage && path !in listOf("/Self/", "/Self/dashboard")) ||
+                    !knownQuery || target.fragment != null ||
                     (next.method == "POST" && response.code !in listOf(302, 303))) {
                     throw BillingException(BillingProblem.REDIRECT)
                 }

@@ -88,6 +88,68 @@ class HttpBillingSessionTest {
         assertEquals(BillingProblem.EXPIRED, problem { other.refresh(credentials) })
     }
 
+    @Test fun observedSchoolLoginRedirectWithSlashAndMarkerLogsInUsingSavedAccount() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(302)
+            .setHeader("Location", "https://jfself.bjut.edu.cn/Self/login/?302=LI")
+            .setHeader("Set-Cookie", "JSESSIONID=demo-observed-cookie; Path=/Self; Secure; HttpOnly"))
+        server.enqueue(html(loginHtml(action = "/Self/login/verify")))
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/Self/dashboard"))
+        ready()
+        val result = session.refresh(credentials)
+        assertEquals(4, result.metrics.size)
+        assertEquals(2, result.devices.size)
+        assertEquals("/Self/login/", requests[1].url.encodedPath)
+        assertEquals("LI", requests[1].url.queryParameter("302"))
+        assertEquals("JSESSIONID=demo-observed-cookie", requests[1].header("Cookie"))
+        val login = requests.single { it.method == "POST" }
+        assertNull(login.url.query)
+        assertEquals("/Self/login/verify", login.url.encodedPath)
+        val body = login.body as FormBody
+        val parameters = (0 until body.size).associate { body.name(it) to body.value(it) }
+        assertEquals(credentials.username, parameters["account"])
+        assertEquals(credentials.password, parameters["password"])
+        assertEquals(1, requests.count { it.method == "POST" })
+    }
+
+    @Test fun loginTrailingSlashWorksWithoutMarkerOrWithUrlRewrittenSession() = runBlocking {
+        for (location in listOf("/Self/login/", "/Self/login/;jsessionid=DEMO123?302=LI")) {
+            server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", location))
+            server.enqueue(html(loginHtml()))
+            server.enqueue(MockResponse().setResponseCode(303).setHeader("Location", "/Self/dashboard"))
+            ready()
+            assertEquals(4, session.refresh(credentials).metrics.size)
+        }
+        assertEquals(2, requests.count { it.method == "POST" })
+    }
+
+    @Test fun unrecognizedQueryOrUnexpectedRedirectDestinationStopsBeforeCredentials() = runBlocking {
+        val locations = listOf("/Self/login/?302=OTHER", "/Self/login/?302=LI&next=https://example.org",
+            "/Self/login/?302=LI&302=LI", "/Self/login/?next=/Self/dashboard", "/Self/dashboard?302=LI",
+            "https://example.org/Self/login/?302=LI", "http://jfself.bjut.edu.cn/Self/login/?302=LI")
+        locations.forEach { location ->
+            server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", location))
+            assertEquals(BillingProblem.REDIRECT, problem { session.refresh(credentials) })
+        }
+        assertEquals(locations.size, requests.size)
+        assertTrue(requests.none { it.method == "POST" })
+    }
+
+    @Test fun rejectedSavedPasswordAfterObservedRedirectDoesNotAutomaticallyRetry() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/Self/login/?302=LI"))
+        server.enqueue(html(loginHtml()))
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/Self/login/?302=LI"))
+        server.enqueue(html(loginHtml()))
+        assertEquals(BillingProblem.REJECTED, problem { session.refresh(credentials) })
+        assertEquals(1, requests.count { it.method == "POST" })
+        assertEquals(4, requests.size)
+    }
+
+    @Test fun redirectWithoutLocationIsRejectedWithoutFollowingOrPosting() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(302))
+        assertEquals(BillingProblem.REDIRECT, problem { session.refresh(credentials) })
+        assertEquals(1, requests.size)
+    }
+
     @Test fun foreignLoginActionIsRejectedBeforePostingAnyCredentials() = runBlocking {
         server.enqueue(html(loginHtml(action = "https://example.com/steal")))
         assertEquals(BillingProblem.REDIRECT, problem { session.refresh(credentials) })
