@@ -46,6 +46,8 @@ class HttpBillingSessionTest {
     }
 
     private fun html(body: String) = MockResponse().setBody(body).setHeader("Content-Type", "text/html;charset=UTF-8")
+    private fun captchaImage() = MockResponse().setHeader("Content-Type", "image/png").setBody("demo-image")
+    private fun login(body: String = loginHtml()) { server.enqueue(html(body)); server.enqueue(captchaImage()) }
     private fun ready() { server.enqueue(html(dashboardHtml)); server.enqueue(MockResponse().setBody(devicesJson)) }
     private suspend fun problem(block: suspend () -> Unit): BillingProblem {
         try { block(); fail("Expected safe failure") } catch (e: BillingException) { return e.problem }
@@ -54,7 +56,7 @@ class HttpBillingSessionTest {
 
     @Test fun loginEncodesSpecialPasswordAndReusesCookieWithoutPuttingCredentialsInUrl() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/Self/login").setHeader("Set-Cookie", "JSESSIONID=demo-cookie; Path=/Self; Secure; HttpOnly"))
-        server.enqueue(html(loginHtml()))
+        login()
         server.enqueue(MockResponse().setResponseCode(303).setHeader("Location", "/Self/dashboard"))
         ready()
         val result = session.refresh(credentials)
@@ -81,7 +83,7 @@ class HttpBillingSessionTest {
         session.refresh(credentials)
         assertEquals("JSESSIONID=demo-one", requests.last().header("Cookie"))
         val other = HttpBillingSession(client)
-        ready(); other.refresh(credentials.copy(id = "second-demo", username = "second-demo"))
+        ready(); other.refresh(credentials.copy(id = "second-demo"))
         assertNull(requests[2].header("Cookie"))
         assertNull(requests[3].header("Cookie"))
         other.close()
@@ -92,7 +94,7 @@ class HttpBillingSessionTest {
         server.enqueue(MockResponse().setResponseCode(302)
             .setHeader("Location", "https://jfself.bjut.edu.cn/Self/login/?302=LI")
             .setHeader("Set-Cookie", "JSESSIONID=demo-observed-cookie; Path=/Self; Secure; HttpOnly"))
-        server.enqueue(html(loginHtml(action = "/Self/login/verify")))
+        login(loginHtml(action = "/Self/login/verify"))
         server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/Self/dashboard"))
         ready()
         val result = session.refresh(credentials)
@@ -114,7 +116,7 @@ class HttpBillingSessionTest {
     @Test fun loginTrailingSlashWorksWithoutMarkerOrWithUrlRewrittenSession() = runBlocking {
         for (location in listOf("/Self/login/", "/Self/login/;jsessionid=DEMO123?302=LI")) {
             server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", location))
-            server.enqueue(html(loginHtml()))
+            login()
             server.enqueue(MockResponse().setResponseCode(303).setHeader("Location", "/Self/dashboard"))
             ready()
             assertEquals(4, session.refresh(credentials).metrics.size)
@@ -136,12 +138,12 @@ class HttpBillingSessionTest {
 
     @Test fun rejectedSavedPasswordAfterObservedRedirectDoesNotAutomaticallyRetry() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/Self/login/?302=LI"))
-        server.enqueue(html(loginHtml()))
+        login()
         server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/Self/login/?302=LI"))
         server.enqueue(html(loginHtml()))
-        assertEquals(BillingProblem.REJECTED, problem { session.refresh(credentials) })
+        assertEquals(BillingProblem.UNCONFIRMED, problem { session.refresh(credentials) })
         assertEquals(1, requests.count { it.method == "POST" })
-        assertEquals(4, requests.size)
+        assertEquals(5, requests.size)
     }
 
     @Test fun redirectWithoutLocationIsRejectedWithoutFollowingOrPosting() = runBlocking {
@@ -166,19 +168,19 @@ class HttpBillingSessionTest {
     }
 
     @Test fun post307NeverResubmitsPasswordAnd503NeverRetries() = runBlocking {
-        server.enqueue(html(loginHtml()))
+        login()
         server.enqueue(MockResponse().setResponseCode(307).setHeader("Location", "/Self/dashboard"))
         assertEquals(BillingProblem.REDIRECT, problem { session.refresh(credentials) })
         assertEquals(1, requests.count { it.method == "POST" })
-        server.enqueue(html(loginHtml()))
+        login()
         server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0"))
         assertEquals(BillingProblem.CONNECTION, problem { session.refresh(credentials) })
         assertEquals(2, requests.count { it.method == "POST" })
-        assertEquals(4, requests.size)
+        assertEquals(6, requests.size)
     }
 
     @Test fun wrongPasswordDoesNotRetryOrBecomeBillingSuccess() = runBlocking {
-        server.enqueue(html(loginHtml())); server.enqueue(html(loginHtml()))
+        login(); server.enqueue(html(loginHtml(tip = "账号或密码出现错误")))
         assertEquals(BillingProblem.REJECTED, problem { session.refresh(credentials) })
         assertEquals(1, requests.count { it.method == "POST" })
     }
@@ -205,7 +207,7 @@ class HttpBillingSessionTest {
         server.enqueue(html(loginHtml(true)))
         server.enqueue(MockResponse().setHeader("Content-Type", "image/png").setBody("demo-image"))
         assertEquals(BillingProblem.CAPTCHA, problem { session.refresh(credentials) })
-        server.enqueue(html(loginHtml(false)))
+        server.enqueue(html(loginHtml(false, tip = "账号或密码出现错误")))
         assertEquals(BillingProblem.REJECTED, problem { session.refresh(credentials, "1234") })
         assertEquals(1, requests.count { it.method == "POST" })
     }
@@ -253,5 +255,48 @@ class HttpBillingSessionTest {
         assertNotNull(server.takeRequest(3, TimeUnit.SECONDS))
         task.cancelAndJoin()
         assertTrue(task.isCancelled)
+    }
+
+    @Test fun hiddenCaptchaInitializationPrecedesPostAndUsesEffectiveReferer() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/Self/login/?302=LI"))
+        login()
+        server.enqueue(html(dashboardHtml)); server.enqueue(MockResponse().setBody("[]"))
+        session.refresh(credentials)
+        assertEquals(listOf("/Self/dashboard", "/Self/login/", "/Self/login/randomCode", "/Self/login/verify", "/Self/dashboard/getOnlineList"),
+            requests.map { it.url.encodedPath.substringBefore(';') })
+        assertEquals("https://jfself.bjut.edu.cn/Self/login/?302=LI", requests[2].header("Referer"))
+        assertEquals(requests[2].header("Referer"), requests[3].header("Referer"))
+        assertNull(session.captcha)
+        assertTrue(session.diagnostics.any { it.stage == "初始化验证码会话" })
+    }
+
+    @Test fun cookiesSetForDifferentPathAreSentOnlyOnMatchingLaterRequest() = runBlocking {
+        server.enqueue(html(loginHtml(action = "/Self/login/verify")).setHeader("Set-Cookie", "login-only=demo-value; Path=/Self/login/verify; Secure"))
+        server.enqueue(captchaImage())
+        server.enqueue(html(dashboardHtml)); server.enqueue(MockResponse().setBody("[]"))
+        session.refresh(credentials)
+        assertNull(requests[1].header("Cookie"))
+        assertEquals("login-only=demo-value", requests[2].header("Cookie"))
+        assertNull(requests[3].header("Cookie"))
+    }
+
+    @Test fun webLoginKeepsNewPasswordEphemeralAndConsumesTokenOnce() = runBlocking {
+        login()
+        val page = session.openWeb(credentials)
+        assertEquals(0, requests.count { it.method == "POST" })
+        server.enqueue(html(dashboardHtml)); server.enqueue(MockResponse().setBody("[]"))
+        val result = session.submitWeb(page.token, "changed-demo-password", "")
+        assertTrue(result is BillingWebResult.Success)
+        val body = requests.single { it.method == "POST" }.body as FormBody
+        assertEquals("changed-demo-password", (0 until body.size).associate { body.name(it) to body.value(it) }["password"])
+        assertEquals("demo&+ #?=密码%", credentials.password)
+        assertEquals(BillingProblem.EXPIRED, problem { session.submitWeb(page.token, "another-password", "") })
+        assertEquals(1, requests.count { it.method == "POST" })
+    }
+
+    @Test fun successfulReplyForAnotherAccountIsRejectedBeforeDeviceRead() = runBlocking {
+        server.enqueue(html(dashboardHtml.replace("demo-account", "another-account")))
+        assertEquals(BillingProblem.ACCOUNT_MISMATCH, problem { session.refresh(credentials) })
+        assertEquals(1, requests.size)
     }
 }

@@ -74,7 +74,7 @@ class AccountUiTest {
         compose.onNodeWithContentDescription("打开 App 自动登录").assertIsOn().performClick()
         compose.waitUntil(10_000) { !createAccountRepository(compose.activity).load().settings.autoLogin }
         waitForEnabled("网络模式：宿舍 WiFi")
-        compose.onNodeWithContentDescription("网络模式：宿舍 WiFi").performClick()
+        compose.onNodeWithContentDescription("网络模式：宿舍 WiFi").performScrollTo().performClick()
         compose.waitUntil(10_000) {
             createAccountRepository(compose.activity).load().settings.networkMode == io.github.tbeimu.gongxiaozhu.data.NetworkMode.DORM_WIFI
         }

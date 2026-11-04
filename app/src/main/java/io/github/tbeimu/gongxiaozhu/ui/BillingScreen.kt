@@ -51,6 +51,7 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
     val enabled = !state.busy && !billing.running
     val metrics = billing.snapshot?.metrics.orEmpty()
     var code by remember(billing.captcha) { mutableStateOf("") }
+    var diagnosticsVisible by remember { mutableStateOf(false) }
     var choosingDevice by remember(billing.snapshot?.devices) { mutableStateOf(false) }
     val context = LocalContext.current
     if (choosingDevice) {
@@ -81,6 +82,13 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
             MetricCard("账户余额", metrics["账户余额"], Modifier.weight(1f))
         }
         Text(billing.message, modifier = Modifier.testTag("billing_status"), style = MaterialTheme.typography.bodyMedium)
+        if (billing.diagnostics.isNotEmpty()) {
+            TextButton(onClick = { diagnosticsVisible = !diagnosticsVisible }) { Text(if (diagnosticsVisible) "收起查询诊断" else "查看查询诊断") }
+            if (diagnosticsVisible) billing.diagnostics.forEach { event ->
+                Text("${event.stage} · HTTP ${event.httpStatus ?: "未完成"} · ${event.page} · 会话 Cookie ${if (event.hasSessionCookie) "存在" else "不存在"}",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
         billing.loadedAt?.let { Text("上次查询：${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it))}",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         if (billing.running) CircularProgressIndicator(Modifier.size(24.dp))

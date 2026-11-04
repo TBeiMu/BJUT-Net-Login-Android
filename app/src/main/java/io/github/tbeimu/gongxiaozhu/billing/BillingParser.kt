@@ -7,6 +7,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import org.jsoup.Jsoup
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 internal class SelfLoginForm(val action: String, val checkcode: String, val captchaRequired: Boolean) {
     override fun toString() = "SelfLoginForm(fields=<redacted>)"
@@ -16,6 +18,52 @@ internal object BillingParser {
     val labels = listOf("已用流量", "可用流量", "消费保护", "账户余额")
 
     fun isLogin(html: String) = Jsoup.parse(html).selectFirst("form input[name=account]") != null
+
+    /** Read only the error-tip area/argument, never dashboard's embedded private user object. */
+    fun loginProblem(html: String): BillingProblem {
+        val doc = Jsoup.parse(html)
+        val visible = doc.select("#errorTip, .alert-danger").text()
+        val inlineTip = doc.select("script:not([src])").asSequence().map { it.data() }
+            .filter { it.contains("function (tip)") || it.contains("function(tip)") }
+            .mapNotNull { Regex("\\}\\)\\(\\s*['\"]([^'\"]*)['\"]\\s*\\)").find(it)?.groupValues?.get(1) }
+            .joinToString(" ")
+        val tip = "$visible $inlineTip"
+        return when {
+            tip.contains("验证码") && (tip.contains("错误") || tip.contains("不正确") || tip.contains("过期")) -> BillingProblem.CAPTCHA_REJECTED
+            (tip.contains("账号") || tip.contains("帐号") || tip.contains("密码")) &&
+                (tip.contains("错误") || tip.contains("不正确") || tip.contains("不存在")) -> BillingProblem.REJECTED
+            else -> BillingProblem.UNCONFIRMED
+        }
+    }
+
+    fun requireAccount(html: String, expected: String) {
+        val doc = Jsoup.parse(html)
+        // Extract just the account key; never deserialize/return the embedded user object.
+        val usernames = doc.select("script:not([src])").flatMap { script ->
+            Regex("[\"']userName[\"']\\s*:\\s*(\"(?:\\\\.|[^\"\\\\])*\")").findAll(script.data()).mapNotNull {
+                runCatching { Json.decodeFromString<String>(it.groupValues[1]) }.getOrNull()
+            }.toList()
+        }.distinct()
+        if (usernames.size != 1 || usernames.single() != expected) throw BillingException(BillingProblem.ACCOUNT_MISMATCH)
+    }
+
+    fun loginAssets(html: String, base: HttpUrl): List<HttpUrl> = Jsoup.parse(html)
+        .select("script[src], link[rel=stylesheet][href], img[src]").mapNotNull {
+            base.resolve(if (it.tagName() == "link") it.attr("href") else it.attr("src"))
+        }.filter(::isLoginAsset).distinct().take(32)
+
+    fun isLoginAsset(url: HttpUrl): Boolean = url.scheme == "https" && url.host == "jfself.bjut.edu.cn" &&
+        url.port == 443 && url.username.isEmpty() && url.password.isEmpty() && url.fragment == null && url.query == null &&
+        url.encodedPath.startsWith("/Self/resources/")
+
+    fun trustedLoginBase(value: String): HttpUrl {
+        val url = value.toHttpUrlOrNull() ?: throw BillingException(BillingProblem.REDIRECT)
+        if (url.scheme != "https" || url.host != "jfself.bjut.edu.cn" || url.port != 443 ||
+            !url.encodedPath.substringBefore(";jsessionid=").let { it == "/Self/login" || it == "/Self/login/" }) {
+            throw BillingException(BillingProblem.REDIRECT)
+        }
+        return url
+    }
 
     fun loginForm(html: String): SelfLoginForm {
         val doc = Jsoup.parse(html)

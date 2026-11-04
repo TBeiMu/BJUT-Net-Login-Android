@@ -1,11 +1,11 @@
 package io.github.tbeimu.gongxiaozhu.billing
 
 /** Invented fixtures; never capture a real signed-in dashboard (it embeds private credentials). */
-internal fun loginHtml(captcha: Boolean = false, action: String = "/Self/login/verify;jsessionid=DEMO", scheme: String = "false") = """
+internal fun loginHtml(captcha: Boolean = false, action: String = "/Self/login/verify;jsessionid=DEMO", scheme: String = "false", tip: String = "") = """
     <html><form action="$action" method="post">
     <input name="account"><input name="password"><input type="hidden" name="checkcode" value="demo-check">
     <div id="randomDiv" class="form-group ${if (captcha) "" else "hide"}"><input name="code"></div></form>
-    <script>if ($scheme && passwordVal != null) { sm3(passwordVal); }</script></html>
+    <script>if ($scheme && passwordVal != null) { sm3(passwordVal); } (function(tip){})('$tip');</script></html>
 """.trimIndent()
 
 internal val dashboardHtml = """
@@ -13,7 +13,7 @@ internal val dashboardHtml = """
     <dl><dt>5678 <small class="unit">MB</small></dt><dd>可用流量</dd></dl>
     <dl><dt>未设置</dt><dd>消费保护</dd></dl>
     <dl><dt>12.3456 <small class="unit">元</small></dt><dd>账户余额</dd></dl>
-    <table id="OnlineLisBig"></table></html>
+    <table id="OnlineLisBig"></table><script>var demo={"userName":"demo-account"};</script></html>
 """.trimIndent()
 
 internal val devicesJson = """[

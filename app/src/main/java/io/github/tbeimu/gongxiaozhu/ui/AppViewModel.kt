@@ -80,6 +80,12 @@ class AppViewModel(private val repository: AccountRepository, wifiMonitor: WifiM
     fun requestOffline(id: String) { if (!state.value.busy) billingController.requestOffline(id) }
     fun confirmOffline() { if (!state.value.busy) billingController.confirmOffline() }
     fun dismissOffline() = billingController.dismissOffline()
+    fun dismissWebOffer() = billingController.dismissWebOffer()
+    fun openBillingWeb() { if (!state.value.busy && !state.value.storageBlocked) billingController.openWeb() }
+    fun submitBillingWeb(token: String, password: String, code: String) = billingController.submitWeb(token, password, code)
+    fun refreshBillingWebCaptcha(token: String, display: (ByteArray) -> Unit) = billingController.refreshWebCaptcha(token, display)
+    fun closeBillingWeb() = billingController.closeWeb()
+    fun unsupportedBillingWeb() = billingController.unsupportedWeb()
 
     fun reload() {
         if (state.value.busy) return

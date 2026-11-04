@@ -19,6 +19,9 @@ data class BillingUiState(
     val captcha: ByteArray? = null,
     val confirmation: OfflineConfirmation? = null,
     val loadedAt: Long? = null,
+    val diagnostics: List<BillingDiagnostic> = emptyList(),
+    val offerWeb: Boolean = false,
+    val webPage: BillingWebPage? = null,
 ) {
     override fun toString() = "BillingUiState(running=$running, data=<redacted>)"
 }
@@ -71,7 +74,11 @@ class BillingController(
         reset(if (offlineSent) "已停止等待注销结果，请重新查询在线信息核对" else "已停止查询；下次进入资费页会重新查询", clearData = false)
     }
 
-    fun setVisible(value: Boolean) { visible = value; if (value) maybeQuery() }
+    fun setVisible(value: Boolean) {
+        visible = value
+        if (!value && (state.webPage != null || state.offerWeb)) reset("已关闭内置登录，请重新查询资费", false)
+        if (value) maybeQuery()
+    }
 
     private fun maybeQuery() {
         if (visible && foreground && !attempted && accountId != null && wifi != null) query()
@@ -79,33 +86,102 @@ class BillingController(
 
     fun query(code: String? = null) {
         if (!foreground || job?.isCompleted == false) return
+        if (state.webPage != null) return
         attempted = true
         val id = accountId ?: run { emit(state.copy(message = "请先添加并选择校园网账号")); return }
         val selectedWifi = wifi ?: run { emit(state.copy(message = "未连接 WiFi，请先连接校园 WiFi")); return }
         val current = session ?: selectedWifi.billingSession?.invoke()?.also { session = it }
             ?: run { emit(state.copy(message = "当前 WiFi 无法提供自助服务连接")); return }
         val token = ++generation
-        emit(state.copy(running = true, message = "正在登录查询校园网资费…", confirmation = null))
+        emit(state.copy(running = true, message = "正在登录查询校园网资费…", confirmation = null, offerWeb = false))
         job = scope.launch {
             try {
                 val selected = credentials(id) ?: throw BillingException(BillingProblem.REJECTED)
                 val result = current.refresh(selected, code)
                 if (token == generation) emit(BillingUiState(snapshot = result,
-                    message = result.notice ?: "资费已更新 · 数据来自学校自助服务", loadedAt = System.currentTimeMillis()))
+                    message = result.notice ?: "资费已更新 · 数据来自学校自助服务", loadedAt = System.currentTimeMillis(), diagnostics = current.diagnostics))
             } catch (error: CancellationException) { throw error }
             catch (_: VaultUnavailableException) {
                 if (token == generation) { reset("账号存储不可用，查询已停止", true); storageFailure() }
             } catch (error: BillingException) {
                 if (token == generation) {
                     emit(state.copy(running = false, message = error.problem.hint,
-                        captcha = if (error.problem == BillingProblem.CAPTCHA) current.captcha else null, confirmation = null))
-                    if (error.problem != BillingProblem.CAPTCHA) { current.close(); session = null }
+                        captcha = if (error.problem in listOf(BillingProblem.CAPTCHA, BillingProblem.CAPTCHA_REJECTED)) current.captcha else null,
+                        confirmation = null, diagnostics = current.diagnostics,
+                        offerWeb = error.problem in listOf(BillingProblem.REJECTED, BillingProblem.UNCONFIRMED) ||
+                            (error.problem == BillingProblem.RESPONSE && current.diagnostics.any { it.page == "登录页" })))
+                    if (error.problem !in listOf(BillingProblem.CAPTCHA, BillingProblem.CAPTCHA_REJECTED)) { current.close(); session = null }
                 }
             } catch (_: Exception) {
                 if (token == generation) { current.close(); session = null; emit(state.copy(running = false,
                     captcha = null, confirmation = null, message = BillingProblem.RESPONSE.hint)) }
             }
         }.also { task -> task.invokeOnCompletion { scope.launch { maybeQuery() } } }
+    }
+
+    fun dismissWebOffer() { emit(state.copy(offerWeb = false)) }
+
+    fun openWeb() {
+        if (!foreground || job?.isCompleted == false || !state.offerWeb) return
+        val id = accountId ?: return
+        val selectedWifi = wifi ?: return
+        session?.close()
+        val current = selectedWifi.billingSession?.invoke()?.also { session = it } ?: return
+        val token = ++generation
+        emit(state.copy(running = true, offerWeb = false, captcha = null, message = "正在准备学校内置登录页…"))
+        job = scope.launch {
+            try {
+                val selected = credentials(id) ?: throw BillingException(BillingProblem.REJECTED)
+                val page = current.openWeb(selected)
+                if (token == generation) emit(state.copy(running = false, webPage = page,
+                    message = "账号密码已预填，请在学校页面点击登录；修改本次密码不会保存", diagnostics = current.diagnostics))
+            } catch (error: CancellationException) { throw error }
+            catch (_: VaultUnavailableException) { if (token == generation) { reset("账号存储不可用，查询已停止", true); storageFailure() } }
+            catch (error: BillingException) { if (token == generation) webFailed(current, error.problem) }
+            catch (_: Exception) { if (token == generation) webFailed(current, BillingProblem.RESPONSE) }
+        }
+    }
+
+    fun submitWeb(pageToken: String, password: String, code: String) {
+        if (!foreground || job?.isCompleted == false || state.webPage?.token != pageToken) return
+        val current = session ?: return
+        val token = ++generation
+        emit(state.copy(running = true, message = "正在提交学校网页登录…"))
+        job = scope.launch {
+            try {
+                when (val result = current.submitWeb(pageToken, password, code)) {
+                    is BillingWebResult.Success -> if (token == generation) emit(BillingUiState(snapshot = result.snapshot,
+                        message = result.snapshot.notice ?: "网页登录成功，资费已更新", loadedAt = System.currentTimeMillis(), diagnostics = current.diagnostics))
+                    is BillingWebResult.Continue -> if (token == generation) emit(state.copy(running = false,
+                        webPage = result.page, message = result.problem.hint, diagnostics = current.diagnostics))
+                }
+            } catch (error: CancellationException) { throw error }
+            catch (error: BillingException) { if (token == generation) webFailed(current, error.problem) }
+            catch (_: Exception) { if (token == generation) webFailed(current, BillingProblem.RESPONSE) }
+        }
+    }
+
+    fun refreshWebCaptcha(pageToken: String, display: (ByteArray) -> Unit) {
+        if (!foreground || job?.isCompleted == false || state.webPage?.token != pageToken) return
+        val current = session ?: return
+        val token = ++generation
+        emit(state.copy(running = true))
+        job = scope.launch {
+            try {
+                val image = current.refreshWebCaptcha(pageToken)
+                if (token == generation && state.webPage?.token == pageToken) { display(image); emit(state.copy(running = false, diagnostics = current.diagnostics)) }
+            } catch (error: CancellationException) { throw error }
+            catch (error: BillingException) { if (token == generation) webFailed(current, error.problem) }
+            catch (_: Exception) { if (token == generation) webFailed(current, BillingProblem.RESPONSE) }
+        }
+    }
+
+    fun closeWeb() { reset("已取消内置网页登录，请手动登录查询", clearData = false) }
+    fun unsupportedWeb() { reset("系统 WebView 不支持安全网页登录，请更新系统 WebView，或打开学校自助服务网页", false) }
+
+    private fun webFailed(current: BillingSession, problem: BillingProblem) {
+        emit(state.copy(running = false, webPage = null, offerWeb = false, captcha = null, message = problem.hint, diagnostics = current.diagnostics))
+        current.close(); session = null
     }
 
     fun requestOffline(sessionId: String) {
@@ -175,7 +251,8 @@ class BillingController(
         job?.cancel()
         session?.close()
         session = null
-        emit(if (clearData) BillingUiState(message = actualMessage) else state.copy(running = false, captcha = null, confirmation = null, message = actualMessage))
+        emit(if (clearData) BillingUiState(message = actualMessage) else state.copy(running = false, captcha = null,
+            confirmation = null, offerWeb = false, webPage = null, diagnostics = emptyList(), message = actualMessage))
         offlineSent = false
         offlineConfirmed = false
     }

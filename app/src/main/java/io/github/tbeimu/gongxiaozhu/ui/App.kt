@@ -128,6 +128,17 @@ fun GongXiaoZhuApp(model: AppViewModel) = GongXiaoZhuTheme {
     state.editor?.let { draft ->
         AccountEditor(draft, state.busy, state.editorError, onDismiss = model::closeEditor, onSave = model::saveAccount)
     }
+    if (state.billing.offerWeb) {
+        AlertDialog(onDismissRequest = model::dismissWebOffer,
+            title = { Text("自动查询登录未完成") },
+            text = { Text("是否改用内置网页登录？将预填当前所选账号和密码，由你在学校页面点击登录。") },
+            confirmButton = { TextButton(onClick = model::openBillingWeb) { Text("网页登录") } },
+            dismissButton = { TextButton(onClick = model::dismissWebOffer) { Text("暂不使用") } })
+    }
+    state.billing.webPage?.let { page ->
+        BillingWebDialog(page, state.billing.running, state.billing.message, model::submitBillingWeb,
+            model::refreshBillingWebCaptcha, model::closeBillingWeb, model::unsupportedBillingWeb)
+    }
     state.billing.confirmation?.let { confirmation ->
         AlertDialog(onDismissRequest = model::dismissOffline,
             properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),

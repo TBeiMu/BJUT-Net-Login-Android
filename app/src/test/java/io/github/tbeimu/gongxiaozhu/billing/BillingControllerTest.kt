@@ -26,6 +26,8 @@ class BillingControllerTest {
         override suspend fun offlineTip() = "模拟设备注销提示"
         override suspend fun offline(device: OnlineDevice) { offlineCalls++; assertEquals(demoDevice.sessionId, device.sessionId); onOffline() }
         override fun close() { closed = true }
+        override suspend fun openWeb(credentials: AccountDraft) = BillingWebPage("fake-token", "https://jfself.bjut.edu.cn/Self/login/", "fake html")
+        override suspend fun submitWeb(token: String, password: String, code: String) = BillingWebResult.Success(demoSnapshot)
     }
     private fun wifi(session: BillingSession, key: String = "wifi-demo") = WifiConnection(key, PortalTransport { "" }) { session }
     private fun draft(id: String) = AccountDraft(id, "模拟", "demo-$id", "demo-only-password")
@@ -164,5 +166,41 @@ class BillingControllerTest {
         controller.requestOffline(demoDevice.sessionId); runCurrent(); controller.confirmOffline(); runCurrent()
         controller.wifiChanged(null); runCurrent()
         assertEquals(1, fake.offlineCalls); assertTrue(states.last().message.contains("未确认")); assertFalse(states.last().running)
+    }
+
+    @Test fun rejectedLoginOffersWebOnceAndCancelDoesNotResubmit() = runTest {
+        val fake = FakeSession().apply { onRefresh = { throw BillingException(BillingProblem.UNCONFIRMED) } }
+        val states = mutableListOf<BillingUiState>()
+        val controller = BillingController(backgroundScope, { draft(it) }, { states += it }, {}, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+        assertTrue(states.last().offerWeb)
+        controller.dismissWebOffer(); runCurrent()
+        assertFalse(states.last().offerWeb); assertEquals(1, fake.calls)
+    }
+
+    @Test fun networkFailureDoesNotOfferWebAndSwitchCancelsOpenPage() = runTest {
+        val fake = FakeSession().apply { onRefresh = { throw BillingException(BillingProblem.CONNECTION) } }
+        val states = mutableListOf<BillingUiState>()
+        val controller = BillingController(backgroundScope, { draft(it) }, { states += it }, {}, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+        assertFalse(states.last().offerWeb)
+        fake.onRefresh = { throw BillingException(BillingProblem.REJECTED) }
+        controller.query(); runCurrent(); controller.openWeb(); runCurrent()
+        assertNotNull(states.last().webPage)
+        controller.accountChanged("demo-2"); controller.submitWeb("fake-token", "demo-password", ""); runCurrent()
+        assertNull(states.last().webPage); assertNull(states.last().snapshot)
+    }
+
+    @Test fun webSuccessReturnsSnapshotAndBackgroundClosesPendingPage() = runTest {
+        val fake = FakeSession().apply { onRefresh = { throw BillingException(BillingProblem.UNCONFIRMED) } }
+        val states = mutableListOf<BillingUiState>()
+        val controller = BillingController(backgroundScope, { draft(it) }, { states += it }, {}, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+        controller.openWeb(); runCurrent(); controller.submitWeb("fake-token", "changed-demo-password", ""); runCurrent()
+        assertNull(states.last().webPage); assertEquals(demoSnapshot, states.last().snapshot)
+        controller.query(); runCurrent(); controller.openWeb(); runCurrent()
+        assertNotNull(states.last().webPage)
+        controller.leaveForeground(); controller.submitWeb("fake-token", "another-demo-password", ""); runCurrent()
+        assertNull(states.last().webPage); assertFalse(states.last().running); assertTrue(fake.closed)
     }
 }
