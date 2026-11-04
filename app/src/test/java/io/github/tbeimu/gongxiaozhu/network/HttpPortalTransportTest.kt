@@ -1,6 +1,8 @@
 package io.github.tbeimu.gongxiaozhu.network
 
 import java.net.Proxy
+import java.net.InetAddress
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +23,7 @@ class HttpPortalTransportTest {
     private lateinit var server: MockWebServer
     private lateinit var client: OkHttpClient
     private lateinit var transport: HttpPortalTransport
+    private val originalRequests = mutableListOf<okhttp3.Request>()
 
     @Before fun setup() {
         server = MockWebServer()
@@ -28,7 +31,8 @@ class HttpPortalTransportTest {
         // Test-only destination rewrite: production requests retain their fixed campus origins.
         client = portalClientBuilder().addInterceptor { chain ->
             val original = chain.request()
-            val local = original.url.newBuilder().host(server.hostName).port(server.port).build()
+            originalRequests += original
+            val local = original.url.newBuilder().scheme("http").host(server.hostName).port(server.port).build()
             chain.proceed(original.newBuilder().url(local).build())
         }.build()
         transport = HttpPortalTransport(client)
@@ -47,6 +51,64 @@ class HttpPortalTransportTest {
         assertFalse(client.retryOnConnectionFailure)
         assertEquals(Proxy.NO_PROXY, client.proxy)
         assertEquals(8000, client.callTimeoutMillis)
+    }
+
+    @Test fun connectivityCheckUsesFixedHttpsUrlWithoutCredentialsAndRequires204() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(204))
+        assertTrue(HttpPortalTransport(client, client).hasIpv4Internet())
+        val request = originalRequests.single()
+        assertEquals("https://connectivitycheck.platform.hicloud.com/generate_204", request.url.toString())
+        assertEquals("GET", request.method)
+        assertNull(request.url.query)
+        assertNull(request.body)
+        assertNull(request.header("Authorization"))
+        assertNull(request.header("Cookie"))
+        assertEquals("no-store", request.header("Cache-Control"))
+    }
+
+    @Test fun connectivityCheckRejectsCaptivePagesRedirectsAndHttpErrors() = runBlocking {
+        val checker = HttpPortalTransport(client, client)
+        server.enqueue(MockResponse().setBody("<html>login required</html>"))
+        assertFalse(checker.hasIpv4Internet())
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", server.url("/login")))
+        assertFalse(checker.hasIpv4Internet())
+        server.enqueue(MockResponse().setResponseCode(500))
+        assertFalse(checker.hasIpv4Internet())
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test fun connectivityCheckNeverFallsBackToUnboundDefaultNetwork() = runBlocking {
+        assertFalse(transport.hasIpv4Internet())
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun connectivityDnsDiscardsIpv6AndNeverFallsBackToSystemDns() {
+        val ipv4 = InetAddress.getByAddress(byteArrayOf(192.toByte(), 0, 2, 1))
+        val ipv6 = InetAddress.getByAddress(ByteArray(16).also { it[15] = 1 })
+        val queriedHosts = mutableListOf<String>()
+        val dns = ipv4OnlyDns(object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<InetAddress> {
+                queriedHosts += hostname
+                return listOf(ipv6, ipv4)
+            }
+        })
+        assertEquals(listOf(ipv4), dns.lookup("test.example"))
+        assertEquals(listOf("test.example"), queriedHosts)
+        try {
+            ipv4OnlyDns(object : okhttp3.Dns {
+                override fun lookup(hostname: String) = listOf(ipv6)
+            }).lookup("test.example")
+            fail("IPv6 alone must not count as IPv4 connectivity")
+        } catch (_: UnknownHostException) { /* expected */ }
+    }
+
+    @Test fun cancelledConnectivityCheckCancelsBoundHttpCall() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val pending = async(Dispatchers.Default) { HttpPortalTransport(client, client).hasIpv4Internet() }
+        assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+        withTimeout(2000) { pending.cancelAndJoin() }
+        assertTrue(pending.isCancelled)
+        assertTrue(client.dispatcher.runningCalls().all { it.isCanceled() })
     }
 
     @Test fun getEncodesSpecialCharactersWithoutAddingParameters() = runBlocking {

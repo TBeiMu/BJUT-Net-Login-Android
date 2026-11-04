@@ -31,6 +31,9 @@ class PortalRequest(val endpoint: PortalEndpoint, val parameters: List<Pair<Stri
 
 fun interface PortalTransport {
     suspend fun execute(request: PortalRequest): String
+
+    /** Credential-free external check, through the same physical WiFi and IPv4 only. */
+    suspend fun hasIpv4Internet(): Boolean = false
 }
 
 enum class PortalProblem(val hint: String) {
@@ -63,8 +66,8 @@ internal fun portalClientBuilder() = OkHttpClient.Builder()
     .callTimeout(8, TimeUnit.SECONDS)
 
 /** Async calls are cancelled by foreground/network lifecycle cancellation. No HTTP logging. */
-class HttpPortalTransport(private val calls: Call.Factory) : PortalTransport {
-    override suspend fun execute(request: PortalRequest): String = suspendCancellableCoroutine { continuation ->
+class HttpPortalTransport(private val calls: Call.Factory, private val ipv4Calls: Call.Factory? = null) : PortalTransport {
+    override suspend fun execute(request: PortalRequest): String {
         val builder = Request.Builder().header("User-Agent", "GongXiaoZhu/0.1 Android")
             .header("Cache-Control", "no-store")
         if (request.endpoint.post) {
@@ -78,7 +81,27 @@ class HttpPortalTransport(private val calls: Call.Factory) : PortalTransport {
             }.build()
             builder.url(url)
         }
-        val call = calls.newCall(builder.build())
+        return executeHttp(builder.build(), calls)
+    }
+
+    override suspend fun hasIpv4Internet(): Boolean {
+        val factory = ipv4Calls ?: return false
+        return try {
+            // A valid HTTPS 204 proves external reachability, not which portal stage ran.
+            // Never include account data or follow a redirect/captive portal response.
+            val request = Request.Builder().url(IPV4_CHECK_URL)
+                .header("Cache-Control", "no-store").build()
+            executeHttp(request, factory, connectivityCheck = true)
+            true
+        } catch (_: PortalException) { false }
+    }
+
+    private suspend fun executeHttp(
+        request: Request,
+        factory: Call.Factory,
+        connectivityCheck: Boolean = false,
+    ): String = suspendCancellableCoroutine { continuation ->
+        val call = factory.newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -89,6 +112,10 @@ class HttpPortalTransport(private val calls: Call.Factory) : PortalTransport {
                 try {
                     val text = response.use {
                         if (it.code in 300..399) throw PortalException(PortalProblem.REDIRECT)
+                        if (connectivityCheck) {
+                            if (it.code != 204) throw PortalException(PortalProblem.UNCONFIRMED)
+                            return@use ""
+                        }
                         if (!it.isSuccessful) throw PortalException(PortalProblem.CONNECTION)
                         val body = it.body ?: throw PortalException(PortalProblem.RESPONSE)
                         val source = body.source()
@@ -118,5 +145,8 @@ class HttpPortalTransport(private val calls: Call.Factory) : PortalTransport {
         })
     }
 
-    private companion object { const val MAX_BODY = 128L * 1024 }
+    private companion object {
+        const val MAX_BODY = 128L * 1024
+        const val IPV4_CHECK_URL = "https://connectivitycheck.platform.hicloud.com/generate_204"
+    }
 }

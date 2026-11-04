@@ -15,6 +15,20 @@ class ForegroundLoginControllerTest {
     private val wifi = WifiConnection("wifi-1", PortalTransport { "" })
     private val secondWifi = WifiConnection("wifi-2", PortalTransport { "" })
 
+    @Test fun confirmedInternetCompletionReachesUiAndIsClearedOnNetworkChange() = runTest {
+        val states = mutableListOf<LoginUiState>()
+        val controller = ForegroundLoginController(backgroundScope, CampusAuthenticator { _, _, _, _ ->
+            LoginResult("宿舍 WiFi 已联网", NetworkMode.DORM_WIFI, completed = true)
+        }, { { null } }, { states += it }, {})
+        controller.wifiChanged(wifi)
+        controller.configure(true, true, NetworkMode.DORM_WIFI)
+        controller.enterForeground()
+        runCurrent()
+        assertTrue(states.last().completed)
+        controller.wifiChanged(secondWifi)
+        assertFalse(states.last().completed)
+    }
+
     @Test fun initialNetworkAndStorageReadinessDoNotRaceAutomaticLogin() = runTest {
         var calls = 0
         val states = mutableListOf<LoginUiState>()

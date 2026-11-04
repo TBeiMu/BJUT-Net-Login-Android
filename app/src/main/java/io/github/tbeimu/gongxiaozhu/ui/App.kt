@@ -183,7 +183,13 @@ private fun Home(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onAcc
                 }
             }
             Button(onClick = onLogin, enabled = !state.busy && !state.login.running,
-                modifier = Modifier.fillMaxWidth().testTag("login_button")) { Text(if (state.login.running) "正在认证…" else "登录 / 重试") }
+                modifier = Modifier.fillMaxWidth().testTag("login_button")) {
+                Text(when {
+                    state.login.running -> "正在认证…"
+                    state.login.completed -> "检查联网状态"
+                    else -> "登录 / 重试"
+                })
+            }
         }
         Text("账号密码仅加密保存在本机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }

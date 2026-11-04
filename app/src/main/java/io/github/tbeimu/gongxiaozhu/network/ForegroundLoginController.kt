@@ -14,6 +14,7 @@ data class LoginUiState(
     val wifiConnected: Boolean = false,
     val mode: NetworkMode? = null,
     val needsChoice: Boolean = false,
+    val completed: Boolean = false,
 )
 
 /** Called only on the UI thread; retained by the ViewModel and independently testable. */
@@ -85,7 +86,7 @@ class ForegroundLoginController(
                     if (generation == token) publish(LoginUiState(true, message, wifiConnected = true))
                 }
                 if (generation == token) publish(LoginUiState(message = result.message, wifiConnected = true,
-                    mode = result.mode, needsChoice = result.needsChoice))
+                    mode = result.mode, needsChoice = result.needsChoice, completed = result.completed))
             } catch (error: CancellationException) {
                 throw error
             } catch (_: VaultUnavailableException) {

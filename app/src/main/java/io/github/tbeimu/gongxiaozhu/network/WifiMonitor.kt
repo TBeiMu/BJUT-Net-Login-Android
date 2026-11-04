@@ -8,6 +8,9 @@ import android.net.NetworkRequest
 import android.net.LinkProperties
 import android.os.Handler
 import android.os.Looper
+import java.net.Inet4Address
+import java.net.UnknownHostException
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
@@ -24,6 +27,12 @@ internal fun isPhysicalWifi(capabilities: NetworkCapabilities?): Boolean =
 
 internal fun isPhysicalWifi(hasTransport: (Int) -> Boolean): Boolean =
     hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && !hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+
+internal fun ipv4OnlyDns(boundDns: okhttp3.Dns) = object : okhttp3.Dns {
+    override fun lookup(hostname: String) = boundDns.lookup(hostname).filterIsInstance<Inet4Address>().ifEmpty {
+        throw UnknownHostException("WiFi 没有可用的 IPv4 地址")
+    }
+}
 
 /** Observes physical WiFi, including unvalidated captive networks; never requests/connects WiFi. */
 class WifiMonitor(context: Context) {
@@ -50,7 +59,10 @@ class WifiMonitor(context: Context) {
                     .dns(object : okhttp3.Dns {
                         override fun lookup(hostname: String) = selected.getAllByName(hostname).toList()
                     }).build()
-                trySend(WifiConnection(fingerprint, HttpPortalTransport(client)))
+                val ipv4Client = client.newBuilder().dns(ipv4OnlyDns(client.dns))
+                    .connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS)
+                    .callTimeout(4, TimeUnit.SECONDS).build()
+                trySend(WifiConnection(fingerprint, HttpPortalTransport(client, ipv4Client)))
             }
         }
         val callback = object : ConnectivityManager.NetworkCallback() {

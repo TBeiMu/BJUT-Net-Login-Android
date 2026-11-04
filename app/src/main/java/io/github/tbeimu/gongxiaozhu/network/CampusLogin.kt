@@ -6,7 +6,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 
-data class LoginResult(val message: String, val mode: NetworkMode? = null, val needsChoice: Boolean = false)
+data class LoginResult(val message: String, val mode: NetworkMode? = null, val needsChoice: Boolean = false,
+    val completed: Boolean = false)
 
 fun interface CampusAuthenticator {
     suspend fun login(transport: PortalTransport, mode: NetworkMode, credentials: suspend () -> AccountDraft?,
@@ -19,7 +20,18 @@ class CampusLogin : CampusAuthenticator {
         progress: (String) -> Unit): LoginResult {
         val confirmed = ConfirmedState()
         return try {
-            withTimeout(45_000) { authenticate(transport, mode, credentials, progress, confirmed) }
+            withTimeout(45_000) {
+                val result = try {
+                    authenticate(transport, mode, credentials, progress, confirmed)
+                } catch (error: PortalException) {
+                    confirmed.failure(error.problem)
+                }
+                // A POST can take effect even when its reply is unexpected or lost.
+                // Check reachability before turning that uncertainty into a failure.
+                if (confirmed.dormGatewayOnline && !result.completed && transport.hasIpv4Internet()) {
+                    internetConfirmed()
+                } else result
+            }
         } catch (_: TimeoutCancellationException) {
             confirmed.failure(PortalProblem.CONNECTION)
         } catch (error: CancellationException) {
@@ -53,12 +65,13 @@ class CampusLogin : CampusAuthenticator {
             NetworkMode.AUTO -> error("Explicit mode required")
         }
         confirmed.dormGatewayOnline = selected == NetworkMode.DORM_WIFI && gatewayStatus
-        if (selected == NetworkMode.PUBLIC_WIFI && gatewayStatus) return LoginResult("公共 WiFi 已认证，无需重复登录", selected)
+        if (selected == NetworkMode.PUBLIC_WIFI && gatewayStatus) return LoginResult("公共 WiFi 已认证，无需重复登录", selected, completed = true)
+        if (confirmed.dormGatewayOnline && transport.hasIpv4Internet()) return internetConfirmed()
 
         // Query lgn again after the first stage if it was previously unreachable.
         val ipv4Before = if (selected == NetworkMode.DORM_WIFI) ipv4Probe(transport) else null
         if (selected == NetworkMode.DORM_WIFI && gatewayStatus && ipv4Before == true) {
-            return LoginResult("宿舍 WiFi 两阶段均已认证，无需重复登录", selected)
+            return LoginResult("宿舍 WiFi 两阶段均已认证，无需重复登录", selected, completed = true)
         }
         val account = credentials() ?: return LoginResult("请先添加并设置默认校园网账号", selected)
         if (!gatewayStatus) {
@@ -68,20 +81,29 @@ class CampusLogin : CampusAuthenticator {
             val statusEndpoint = if (selected == NetworkMode.PUBLIC_WIFI) PortalEndpoint.PUBLIC_STATUS else PortalEndpoint.DORM_STATUS
             if (!requiredStatus(transport, statusEndpoint)) throw PortalException(PortalProblem.UNCONFIRMED)
             confirmed.dormGatewayOnline = selected == NetworkMode.DORM_WIFI
+            if (confirmed.dormGatewayOnline && transport.hasIpv4Internet()) return internetConfirmed()
         }
         if (selected == NetworkMode.DORM_WIFI) {
             progress("宿舍第一阶段已认证，正在检查 IPv4 二次认证…")
             val ipv4 = (if (gatewayStatus) ipv4Before else ipv4Probe(transport))
                 ?: return LoginResult("宿舍第一阶段已认证，IPv4 认证页面无法识别或连接，请使用学校登录页面检查", selected)
             if (!ipv4) {
-                if (!PortalParser.ipv4Accepted(transport.execute(ipv4Login(account)))) {
+                val accepted = PortalParser.ipv4Accepted(transport.execute(ipv4Login(account)))
+                val status = ipv4Probe(transport)
+                if (status == true) return LoginResult("宿舍 WiFi 两阶段 IPv4 认证成功", selected, completed = true)
+                if (!accepted) {
                     return LoginResult("宿舍第一阶段已认证，IPv4 二次认证未通过；请检查账号或使用学校登录页面", selected)
                 }
-                if (ipv4Probe(transport) != true) return LoginResult("宿舍第一阶段已认证，IPv4 二次认证已提交但状态未确认，请手动重试", selected)
+                return LoginResult("宿舍第一阶段已认证，IPv4 二次认证已提交但状态未确认，请手动重试", selected)
             }
         }
-        return LoginResult(if (selected == NetworkMode.PUBLIC_WIFI) "公共 WiFi 认证成功" else "宿舍 WiFi 两阶段 IPv4 认证成功", selected)
+        return LoginResult(if (selected == NetworkMode.PUBLIC_WIFI) "公共 WiFi 认证成功" else "宿舍 WiFi 两阶段 IPv4 认证成功", selected, completed = true)
     }
+
+    private fun internetConfirmed() = LoginResult(
+        "宿舍 WiFi 已联网（IPv4 已验证）；二次认证状态未单独确认，无需重复登录",
+        NetworkMode.DORM_WIFI, completed = true,
+    )
 
     private suspend fun probe(transport: PortalTransport, endpoint: PortalEndpoint): Boolean? = try {
         PortalParser.status(transport.execute(statusRequest(endpoint)))

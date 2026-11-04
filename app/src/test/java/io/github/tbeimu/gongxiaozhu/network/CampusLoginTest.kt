@@ -118,11 +118,97 @@ class CampusLoginTest {
     }
 
     @Test fun dormSecondStageFailureReportsPartialState() = runTest {
-        val transport = Script(online, ipv4Offline, "<script>Gno=2</script>")
+        val transport = Script(online, ipv4Offline, "<script>Gno=2</script>", ipv4Offline)
         val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
         assertTrue(result.message.contains("第一阶段已认证"))
         assertTrue(result.message.contains("二次认证未通过"))
-        assertEquals(3, transport.requests.size)
+        assertEquals(4, transport.requests.size)
+        assertFalse(result.completed)
+    }
+
+    @Test fun alreadyConnectedDormWifiDoesNotReadCredentialsOrSubmitSecondLogin() = runTest {
+        val transport = Script(online, connectivity = listOf(true))
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { error("Must not read credentials") }, {})
+        assertTrue(result.completed)
+        assertTrue(result.message.contains("IPv4 已验证"))
+        assertTrue(result.message.contains("未单独确认"))
+        assertFalse(result.message.contains("两阶段"))
+        assertEquals(listOf(PortalEndpoint.DORM_STATUS), transport.endpoints)
+    }
+
+    @Test fun firstStageCanRestoreInternetWithoutSubmittingSecondStage() = runTest {
+        val transport = Script(offline, ipv4Offline, online, online, connectivity = listOf(true))
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertTrue(result.completed)
+        assertTrue(result.message.contains("已联网"))
+        assertEquals(1, transport.endpoints.count { it == PortalEndpoint.DORM_LOGIN })
+        assertFalse(transport.endpoints.contains(PortalEndpoint.IPV4_LOGIN))
+    }
+
+    @Test fun unexpectedSecondStageReplyIsReconciledWithRealIpv4Internet() = runTest {
+        val transport = Script(online, ipv4Offline, "<html>new portal reply</html>", ipv4Offline,
+            connectivity = listOf(false, true))
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertTrue(result.completed)
+        assertTrue(result.message.contains("IPv4 已验证"))
+        assertFalse(result.message.contains("未通过"))
+        assertEquals(1, transport.endpoints.count { it == PortalEndpoint.IPV4_LOGIN })
+    }
+
+    @Test fun lostSecondStageReplyCanStillLeaveWorkingIpv4Internet() = runTest {
+        var connectivityChecks = 0
+        var logins = 0
+        val transport = object : PortalTransport {
+            override suspend fun hasIpv4Internet() = ++connectivityChecks == 2
+            override suspend fun execute(request: PortalRequest) = when (request.endpoint) {
+                PortalEndpoint.DORM_STATUS -> online
+                PortalEndpoint.IPV4_STATUS -> ipv4Offline
+                PortalEndpoint.IPV4_LOGIN -> {
+                    logins++
+                    throw PortalException(PortalProblem.CONNECTION)
+                }
+                else -> error("Unexpected request")
+            }
+        }
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertTrue(result.completed)
+        assertTrue(result.message.contains("已联网"))
+        assertEquals(1, logins)
+    }
+
+    @Test fun changedLoginReplyCanBeConfirmedByExistingPortalStatus() = runTest {
+        val transport = Script(online, ipv4Offline, "<html>new login reply</html>", ipv4Online)
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertTrue(result.completed)
+        assertEquals("宿舍 WiFi 两阶段 IPv4 认证成功", result.message)
+        assertEquals(1, transport.endpoints.count { it == PortalEndpoint.IPV4_LOGIN })
+    }
+
+    @Test fun missingPortalAndFailedConnectivityDoNotClaimSuccess() = runTest {
+        val transport = Script(online, "<html>unknown portal</html>", connectivity = listOf(false, false))
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertFalse(result.completed)
+        assertTrue(result.message.contains("无法识别"))
+        assertFalse(transport.endpoints.contains(PortalEndpoint.IPV4_LOGIN))
+    }
+
+    @Test fun unconfirmedGatewayNeverUsesInternetAsCampusAuthenticationProof() = runTest {
+        val transport = Script(offline, ipv4Offline, online, offline, connectivity = listOf(true))
+        val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
+        assertFalse(result.completed)
+        assertEquals(PortalProblem.UNCONFIRMED.hint, result.message)
+        assertEquals(0, transport.connectivityChecks)
+    }
+
+    @Test fun cancellationDuringConnectivityCheckStopsBeforeReadingCredentials() = runTest {
+        val transport = object : PortalTransport {
+            override suspend fun execute(request: PortalRequest) = online
+            override suspend fun hasIpv4Internet(): Boolean = throw CancellationException("network switched")
+        }
+        try {
+            CampusLogin().login(transport, NetworkMode.DORM_WIFI, { error("Must not read credentials") }, {})
+            fail("Cancellation must propagate")
+        } catch (_: CancellationException) { /* expected */ }
     }
 
     @Test fun noDefaultAccountDoesNotSendLogin() = runTest {
@@ -192,8 +278,14 @@ class CampusLoginTest {
         } catch (_: CancellationException) { /* expected */ }
     }
 
-    private class Script(vararg responses: String) : PortalTransport {
+    private class Script(vararg responses: String, connectivity: List<Boolean> = emptyList()) : PortalTransport {
         private val responses = responses.toList().iterator()
+        private val connectivity = connectivity.iterator()
+        var connectivityChecks = 0
+        override suspend fun hasIpv4Internet(): Boolean {
+            connectivityChecks++
+            return connectivity.hasNext() && connectivity.next()
+        }
         val requests = mutableListOf<PortalRequest>()
         val endpoints get() = requests.map { it.endpoint }
         override suspend fun execute(request: PortalRequest): String {
