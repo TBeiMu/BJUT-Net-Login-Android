@@ -16,8 +16,11 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.flowOn
+import io.github.tbeimu.gongxiaozhu.billing.BillingSession
+import io.github.tbeimu.gongxiaozhu.billing.HttpBillingSession
 
-class WifiConnection(val key: String, val transport: PortalTransport) {
+class WifiConnection(val key: String, val transport: PortalTransport,
+    val billingSession: (() -> BillingSession)? = null) {
     override fun toString() = "WifiConnection(network=<bound>)"
 }
 
@@ -62,7 +65,7 @@ class WifiMonitor(context: Context) {
                 val ipv4Client = client.newBuilder().dns(ipv4OnlyDns(client.dns))
                     .connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS)
                     .callTimeout(4, TimeUnit.SECONDS).build()
-                trySend(WifiConnection(fingerprint, HttpPortalTransport(client, ipv4Client)))
+                trySend(WifiConnection(fingerprint, HttpPortalTransport(client, ipv4Client)) { HttpBillingSession(client) })
             }
         }
         val callback = object : ConnectivityManager.NetworkCallback() {

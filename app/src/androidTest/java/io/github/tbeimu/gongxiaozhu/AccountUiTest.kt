@@ -14,6 +14,7 @@ import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.tbeimu.gongxiaozhu.data.createAccountRepository
@@ -44,7 +45,7 @@ class AccountUiTest {
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("模拟测试账号")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("模拟测试账号").assertExists()
-        compose.onNodeWithText("账号", substring = false).performClick()
+        openManager()
         compose.onNodeWithText("默认").assertExists()
         compose.onNodeWithText("编辑").performClick()
         compose.onNodeWithTag("account_username").assertTextContains("ui-demo-only")
@@ -57,11 +58,13 @@ class AccountUiTest {
     @Test fun selectingAnotherDefaultAndPersistingSettings() {
         waitFor("添加校园网账号")
         add("第一测试账号", "ui-first-demo")
-        compose.onNodeWithText("账号", substring = false).performClick()
+        openManager()
         compose.onNodeWithText("添加账号").performClick()
         fillAndSave("第二测试账号", "ui-second-demo")
         waitFor("第二测试账号")
-        compose.onNode(hasText("设为默认") and isEnabled()).performClick()
+        compose.onNodeWithText("返回", substring = false).performClick()
+        compose.onNodeWithTag("account_selector").performScrollTo().performClick()
+        compose.onNodeWithText("第二测试账号", substring = false).performClick()
         compose.waitUntil(10_000) {
             createAccountRepository(compose.activity).load().defaultAccount?.label == "第二测试账号"
         }
@@ -81,6 +84,22 @@ class AccountUiTest {
 
     private fun waitFor(text: String) = compose.waitUntil(10_000) {
         compose.onAllNodes(androidx.compose.ui.test.hasText(text)).fetchSemanticsNodes().isNotEmpty()
+    }
+
+    private fun openManager() {
+        compose.onNodeWithTag("account_selector").performScrollTo().performClick()
+        waitFor("管理账号")
+        compose.onNodeWithText("管理账号", substring = false).performClick()
+    }
+
+    @Test fun billingReplacesAccountTabAndOffersManagementFromFooter() {
+        waitFor("添加校园网账号")
+        compose.onNodeWithText("资费", substring = false).performClick()
+        listOf("已用流量", "可用流量", "消费保护", "账户余额").forEach {
+            compose.onNodeWithTag("metric_$it").assertExists()
+        }
+        compose.onNodeWithText("管理账号", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("还没有账号").assertExists()
     }
 
     private fun add(label: String, username: String) {

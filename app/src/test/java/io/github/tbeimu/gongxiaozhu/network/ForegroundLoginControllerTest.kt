@@ -15,6 +15,22 @@ class ForegroundLoginControllerTest {
     private val wifi = WifiConnection("wifi-1", PortalTransport { "" })
     private val secondWifi = WifiConnection("wifi-2", PortalTransport { "" })
 
+    @Test fun offlineRequestCancelsAutomaticLoginUntilExplicitManualLogin() = runTest {
+        var calls = 0
+        val controller = ForegroundLoginController(backgroundScope, CampusAuthenticator { _, _, _, _ ->
+            calls++; LoginResult("模拟完成")
+        }, { { null } }, {}, {})
+        controller.deviceOfflineRequested()
+        controller.configure(true, true, NetworkMode.AUTO)
+        controller.enterForeground()
+        controller.deviceOfflineRequested()
+        controller.wifiChanged(wifi); runCurrent()
+        assertEquals(0, calls)
+        controller.wifiChanged(secondWifi); runCurrent()
+        assertEquals(0, calls)
+        controller.login(); runCurrent(); assertEquals(1, calls)
+    }
+
     @Test fun confirmedInternetCompletionReachesUiAndIsClearedOnNetworkChange() = runTest {
         val states = mutableListOf<LoginUiState>()
         val controller = ForegroundLoginController(backgroundScope, CampusAuthenticator { _, _, _, _ ->

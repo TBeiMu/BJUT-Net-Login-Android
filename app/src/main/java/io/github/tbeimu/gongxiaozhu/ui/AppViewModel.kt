@@ -12,6 +12,8 @@ import io.github.tbeimu.gongxiaozhu.network.CampusLogin
 import io.github.tbeimu.gongxiaozhu.network.ForegroundLoginController
 import io.github.tbeimu.gongxiaozhu.network.LoginUiState
 import io.github.tbeimu.gongxiaozhu.network.WifiMonitor
+import io.github.tbeimu.gongxiaozhu.billing.BillingController
+import io.github.tbeimu.gongxiaozhu.billing.BillingUiState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +31,7 @@ data class AppUiState(
     val editor: AccountDraft? = null,
     val editorError: String? = null,
     val login: LoginUiState = LoginUiState(),
+    val billing: BillingUiState = BillingUiState(),
 ) {
     override fun toString() = "AppUiState(loading=$loading, busy=$busy, storageBlocked=$storageBlocked)"
 }
@@ -45,11 +48,21 @@ class AppViewModel(private val repository: AccountRepository, wifiMonitor: WifiM
         publish = { login -> mutable.update { it.copy(login = login) } },
         storageFailure = { mutable.update { it.copy(storageBlocked = true, editor = null, editorError = null) } })
 
+    private val billingController = BillingController(viewModelScope,
+        credentials = { id -> withContext(Dispatchers.IO) { repository.credentialsForLogin(id) } },
+        publish = { billing -> mutable.update { it.copy(billing = billing) } },
+        storageFailure = { mutable.update { it.copy(storageBlocked = true, editor = null, editorError = null) } },
+        beforeOffline = loginController::deviceOfflineRequested)
+
     init {
         reload()
-        viewModelScope.launch { wifiMonitor.connections.collect { loginController.wifiChanged(it) } }
+        viewModelScope.launch { wifiMonitor.connections.collect {
+            loginController.wifiChanged(it)
+            billingController.wifiChanged(it)
+        } }
         viewModelScope.launch {
             state.collect {
+                billingController.accountChanged(if (it.loading || it.storageBlocked) null else it.data.defaultAccountId)
                 loginController.configure(ready = !it.loading && !it.storageBlocked,
                     automatic = it.data.settings.autoLogin && it.data.defaultAccount != null,
                     mode = it.data.settings.networkMode)
@@ -57,9 +70,16 @@ class AppViewModel(private val repository: AccountRepository, wifiMonitor: WifiM
         }
     }
 
-    fun enterForeground() = loginController.enterForeground()
-    fun leaveForeground() = loginController.leaveForeground()
+    fun enterForeground() { loginController.enterForeground(); billingController.enterForeground() }
+    fun leaveForeground() { loginController.leaveForeground(); billingController.leaveForeground() }
     fun login() { if (!state.value.busy && state.value.editor == null) loginController.login() }
+    fun billingVisible(visible: Boolean) = billingController.setVisible(visible)
+    fun queryBilling(code: String? = null) {
+        if (!state.value.busy && !state.value.storageBlocked && state.value.editor == null) billingController.query(code)
+    }
+    fun requestOffline(id: String) { if (!state.value.busy) billingController.requestOffline(id) }
+    fun confirmOffline() { if (!state.value.busy) billingController.confirmOffline() }
+    fun dismissOffline() = billingController.dismissOffline()
 
     fun reload() {
         if (state.value.busy) return
@@ -102,19 +122,21 @@ class AppViewModel(private val repository: AccountRepository, wifiMonitor: WifiM
     fun closeEditor() { if (!state.value.busy) mutable.update { it.copy(editor = null, editorError = null) } }
     fun clearMessage() = mutable.update { it.copy(message = null) }
 
-    fun saveAccount(draft: AccountDraft) = write("账号已加密保存", closeEditor = true) { repository.save(draft) }
-    fun deleteAccount(id: String) = write("账号已删除") { repository.delete(id) }
-    fun setDefault(id: String) = write("默认账号已更新，将用于后续登录") { repository.setDefault(id) }
+    fun saveAccount(draft: AccountDraft) = write("账号已加密保存", closeEditor = true, accountChange = true) { repository.save(draft) }
+    fun deleteAccount(id: String) = write("账号已删除", accountChange = true) { repository.delete(id) }
+    fun setDefault(id: String) = write("默认账号已更新，将用于后续登录", accountChange = true) { repository.setDefault(id) }
     fun updateSettings(settings: AppSettings) = write("设置已保存") { repository.settings(settings) }
-    fun resetStorage() = write("本机账号已清除，请重新添加", recovery = true) { repository.reset() }
+    fun resetStorage() = write("本机账号已清除，请重新添加", recovery = true, accountChange = true) { repository.reset() }
 
     private fun write(
         success: String,
         closeEditor: Boolean = false,
         recovery: Boolean = false,
+        accountChange: Boolean = false,
         action: () -> AccountState,
     ) {
         if (state.value.busy || (state.value.storageBlocked && !recovery)) return
+        if (accountChange) billingController.accountChanged(state.value.data.defaultAccountId, force = true)
         mutable.update { it.copy(busy = true, editorError = null) }
         viewModelScope.launch {
             try {

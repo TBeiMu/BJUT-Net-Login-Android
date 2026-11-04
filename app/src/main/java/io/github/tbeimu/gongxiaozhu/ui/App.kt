@@ -1,6 +1,7 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -65,7 +68,7 @@ import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 
 private enum class Tab(val title: String, val glyph: String) {
-    HOME("首页", "⌂"), ACCOUNTS("账号", "◎"), SETTINGS("设置", "⚙")
+    HOME("首页", "⌂"), BILLING("资费", "◎"), SETTINGS("设置", "⚙")
 }
 
 @Composable
@@ -75,6 +78,12 @@ fun GongXiaoZhuApp(model: AppViewModel) = GongXiaoZhuTheme {
     val snackbar = remember { SnackbarHostState() }
     var deleting by remember { mutableStateOf<AccountSummary?>(null) }
     var resetting by remember { mutableStateOf(false) }
+    var managing by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = managing) { managing = false }
+
+    LaunchedEffect(tab, managing, state.loading, state.storageBlocked) {
+        model.billingVisible(tab == Tab.BILLING && !managing && !state.loading && !state.storageBlocked)
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let { snackbar.showSnackbar(it); model.clearMessage() }
@@ -85,7 +94,7 @@ fun GongXiaoZhuApp(model: AppViewModel) = GongXiaoZhuTheme {
         bottomBar = {
             NavigationBar {
                 Tab.entries.forEach { item ->
-                    NavigationBarItem(selected = tab == item, onClick = { tab = item },
+                    NavigationBarItem(selected = tab == item, onClick = { tab = item; managing = false },
                         icon = { Text(item.glyph, style = MaterialTheme.typography.titleLarge) },
                         label = { Text(item.title) })
                 }
@@ -100,12 +109,17 @@ fun GongXiaoZhuApp(model: AppViewModel) = GongXiaoZhuTheme {
                 Button(onClick = model::reload, enabled = !state.busy) { Text("重试读取") }
                 OutlinedButton(onClick = { resetting = true }, enabled = !state.busy) { Text("清除本机账号并重新录入") }
             }
+            managing -> Column(Modifier.padding(padding).fillMaxSize()) {
+                TextButton(onClick = { managing = false }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("返回") }
+                Accounts(state, Modifier.weight(1f), model::addAccount, model::editAccount, model::setDefault, onDelete = { deleting = it })
+            }
             else -> when (tab) {
                 Tab.HOME -> Home(state, Modifier.padding(padding), onAdd = model::addAccount,
-                    onAccounts = { tab = Tab.ACCOUNTS }, onLogin = model::login,
+                    onAccounts = { managing = true }, onBilling = { tab = Tab.BILLING },
+                    onSelect = model::setDefault, onLogin = model::login,
                     onMode = { model.updateSettings(state.data.settings.copy(networkMode = it)) })
-                Tab.ACCOUNTS -> Accounts(state, Modifier.padding(padding), model::addAccount,
-                    model::editAccount, model::setDefault, onDelete = { deleting = it })
+                Tab.BILLING -> BillingScreen(state, Modifier.padding(padding), onAccounts = { managing = true },
+                    onQuery = model::queryBilling, onOffline = model::requestOffline)
                 Tab.SETTINGS -> Settings(state, Modifier.padding(padding), model)
             }
         }
@@ -113,6 +127,20 @@ fun GongXiaoZhuApp(model: AppViewModel) = GongXiaoZhuTheme {
 
     state.editor?.let { draft ->
         AccountEditor(draft, state.busy, state.editorError, onDismiss = model::closeEditor, onSave = model::saveAccount)
+    }
+    state.billing.confirmation?.let { confirmation ->
+        AlertDialog(onDismissRequest = model::dismissOffline,
+            properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
+            title = { Text("注销这台在线设备？") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("账号：${state.data.defaultAccount?.label.orEmpty()}")
+                Text("IPv4：${confirmation.device.ip.ifBlank { "—" }}")
+                Text("MAC：${confirmation.device.mac.ifBlank { "—" }}")
+                Text("这会让选定设备断开校园网。若是本机，当前连接也会中断；工小助本次前台期间不会自动重新认证。")
+                Text(confirmation.tip, style = MaterialTheme.typography.bodySmall)
+            } },
+            confirmButton = { TextButton(onClick = model::confirmOffline, enabled = !state.busy && !state.billing.running) { Text("确认注销设备") } },
+            dismissButton = { TextButton(onClick = model::dismissOffline) { Text("取消") } })
     }
     deleting?.let { account ->
         AlertDialog(onDismissRequest = { if (!state.busy) deleting = null }, title = { Text("删除账号？") },
@@ -146,30 +174,27 @@ private fun Panel(content: @Composable () -> Unit) {
 
 @Composable
 private fun Home(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onAccounts: () -> Unit,
-    onLogin: () -> Unit, onMode: (NetworkMode) -> Unit) {
+    onBilling: () -> Unit, onSelect: (String) -> Unit, onLogin: () -> Unit, onMode: (NetworkMode) -> Unit) {
     val data = state.data
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Heading("工小助", "让每一次校园连接更简单")
+        Panel {
+            Text("默认登录账号", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            AccountSelector(state, onSelect, onAdd, onAccounts)
+            HorizontalDivider()
+            Text("网络模式：${data.settings.networkMode.title}")
+            state.login.mode?.let { Text("本次识别：${it.title}") }
+            Text("打开 App 自动登录：${if (data.settings.autoLogin) "已开启" else "已关闭"}")
+        }
         Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
             Column(Modifier.fillMaxWidth().padding(26.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("校园网助手", style = MaterialTheme.typography.labelLarge)
                 Text(if (data.accounts.isEmpty()) "先保存你的账号" else "账号已准备就绪", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text("连接校园 WiFi 后，使用默认账号检查并完成认证。")
-                Button(onClick = if (data.accounts.isEmpty()) onAdd else onAccounts) {
-                    Text(if (data.accounts.isEmpty()) "添加校园网账号" else "管理账号")
+                Button(onClick = if (data.accounts.isEmpty()) onAdd else onBilling) {
+                    Text(if (data.accounts.isEmpty()) "添加校园网账号" else "查看校园网资费")
                 }
             }
-        }
-        Panel {
-            Text("默认登录账号", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            data.defaultAccount?.let { account ->
-                Text(account.label, style = MaterialTheme.typography.titleLarge)
-                Text(maskUsername(account.username), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } ?: Text("尚未设置 · 添加首个账号后将自动设为默认")
-            HorizontalDivider()
-            Text("网络模式：${data.settings.networkMode.title}")
-            state.login.mode?.let { Text("本次识别：${it.title}") }
-            Text("打开 App 自动登录：${if (data.settings.autoLogin) "已开启" else "已关闭"}")
         }
         Panel {
             Text(if (state.login.wifiConnected) "WiFi 已连接" else "等待连接 WiFi", style = MaterialTheme.typography.titleMedium)
@@ -192,6 +217,33 @@ private fun Home(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onAcc
             }
         }
         Text("账号密码仅加密保存在本机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun AccountSelector(state: AppUiState, onSelect: (String) -> Unit, onAdd: () -> Unit, onAccounts: () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = { expanded = true }, enabled = !state.busy,
+            shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().testTag("account_selector")) {
+            Column(Modifier.weight(1f).padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(state.data.defaultAccount?.label ?: "选择 / 添加校园网账号", style = MaterialTheme.typography.titleMedium)
+                state.data.defaultAccount?.let { Text(maskUsername(it.username), style = MaterialTheme.typography.bodySmall) }
+            }
+            Text("⌄", style = MaterialTheme.typography.titleLarge)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            state.data.accounts.forEach { account ->
+                DropdownMenuItem(text = { Column {
+                    Text(account.label + if (account.id == state.data.defaultAccountId) " · 当前" else "")
+                    Text(maskUsername(account.username), style = MaterialTheme.typography.bodySmall)
+                } }, onClick = { expanded = false; if (account.id != state.data.defaultAccountId) onSelect(account.id) },
+                    modifier = Modifier.testTag("select_account_${account.id}"))
+            }
+            if (state.data.accounts.isNotEmpty()) HorizontalDivider()
+            DropdownMenuItem(text = { Text("添加账号") }, onClick = { expanded = false; onAdd() })
+            DropdownMenuItem(text = { Text("管理账号") }, onClick = { expanded = false; onAccounts() })
+        }
     }
 }
 

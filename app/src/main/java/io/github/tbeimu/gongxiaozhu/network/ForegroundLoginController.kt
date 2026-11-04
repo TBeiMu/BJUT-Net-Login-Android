@@ -47,6 +47,11 @@ class ForegroundLoginController(
         cancel("已停止登录；重新进入 App 后可检查认证状态")
     }
 
+    fun deviceOfflineRequested() {
+        attempted = true
+        cancel("已请求注销在线设备；如需重新连接，请手动登录")
+    }
+
     fun wifiChanged(connection: WifiConnection?) {
         val firstSnapshot = !hasWifiSnapshot
         hasWifiSnapshot = true
