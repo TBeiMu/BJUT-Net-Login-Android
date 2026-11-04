@@ -1,5 +1,8 @@
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+<!-- Keep the supplied portrait in color; an opaque photo cannot serve as a
+     meaningful monochrome alpha mask for themed icons. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="MonochromeLauncherIcon">
     <background android:drawable="@color/launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>
