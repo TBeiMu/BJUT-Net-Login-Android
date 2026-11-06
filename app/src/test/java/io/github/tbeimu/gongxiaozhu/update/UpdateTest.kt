@@ -164,7 +164,7 @@ class UpdateTest {
         val source = Source()
         repo.networkChanged(UpdateNetwork("wifi1", source)); kotlinx.coroutines.yield(); assertEquals(0, source.checks)
         repo.check(); repo.check(); kotlinx.coroutines.yield(); assertEquals(1, source.checks)
-        assertTrue(repo.download()); assertFalse(repo.download())
+        assertTrue(repo.download(repo.requestDownload())); assertFalse(repo.download(null))
         // IO verification completes on the real IO dispatcher; join the scope's children.
         coroutineContext[ kotlinx.coroutines.Job ]!!.children.toList().forEach { it.join() }
         assertEquals(UpdatePhase.READY, repo.state.value.phase)
@@ -176,7 +176,7 @@ class UpdateTest {
         val repo = UpdateRepository(this, UpdateStore(temp.newFolder()), verifier(), 11, 31)
         val source = Source().apply { block = true }
         repo.networkChanged(UpdateNetwork("one", source)); repo.check(); runCurrent()
-        repo.download(); runCurrent(); repo.leaveForeground(); runCurrent()
+        repo.download(repo.requestDownload()); runCurrent(); repo.leaveForeground(); runCurrent()
         assertEquals(UpdatePhase.DOWNLOADING, repo.state.value.phase)
         repo.networkChanged(UpdateNetwork("two", source)); runCurrent()
         assertEquals(UpdatePhase.PAUSED, repo.state.value.phase); assertEquals(1, source.downloads)
@@ -219,7 +219,7 @@ class UpdateTest {
                 throw UpdateFailure("虚构的连接失败")
             }
         }))
-        repo.check(); runCurrent(); repo.download(); runCurrent()
+        repo.check(); runCurrent(); repo.download(repo.requestDownload()); runCurrent()
         assertTrue(store.load()!!.downloadStarted == true)
         assertFalse(store.partial.exists())
         assertEquals(UpdatePhase.PAUSED, UpdateRepository(this, store, verifier(), 11, 31).state.value.phase)
@@ -239,7 +239,7 @@ class UpdateTest {
         val store = UpdateStore(temp.newFolder())
         val repo = UpdateRepository(this, store, verifier(), 11, 31)
         repo.networkChanged(UpdateNetwork("wifi", Source().apply { block = true }))
-        repo.check(); runCurrent(); repo.download(); runCurrent()
+        repo.check(); runCurrent(); repo.download(repo.requestDownload()); runCurrent()
         repo.networkChanged(null)
         repo.cancel(); repo.cancel(); runCurrent()
         assertEquals(UpdatePhase.IDLE, repo.state.value.phase)
@@ -250,7 +250,7 @@ class UpdateTest {
         repo.check(); assertEquals(UpdatePhase.ERROR, repo.state.value.phase)
         val debug = UpdateRepository(this, UpdateStore(temp.newFolder()), verifier(), 11, 31, false)
         val source = Source()
-        debug.networkChanged(UpdateNetwork("one", source)); debug.check(); assertFalse(debug.download())
+        debug.networkChanged(UpdateNetwork("one", source)); debug.check(); assertFalse(debug.download(null))
         runCurrent(); assertEquals(0, source.checks)
     }
     @Test fun equalOrOlderVersionDoesNotOfferDowngrade() = runTest {
@@ -263,7 +263,7 @@ class UpdateTest {
     @Test fun incompatibleAndroidVersionDoesNotOfferDownload() = runTest {
         val repo = UpdateRepository(this, UpdateStore(temp.newFolder()), verifier(), 11, 31)
         repo.networkChanged(UpdateNetwork("wifi", Source().apply { result = manifest.copy(minSdk = 36) }))
-        repo.check(); runCurrent(); assertEquals(UpdatePhase.ERROR, repo.state.value.phase); assertFalse(repo.download())
+        repo.check(); runCurrent(); assertEquals(UpdatePhase.ERROR, repo.state.value.phase); assertFalse(repo.download(null))
     }
     @Test fun leavingForegroundCancelsCheckButAllowsManualRetry() = runTest {
         val repo = UpdateRepository(this, UpdateStore(temp.newFolder()), verifier(), 11, 31)
@@ -275,7 +275,7 @@ class UpdateTest {
     @Test fun thirtyMinuteLimitPausesWithoutRetrying() = runTest {
         val repo = UpdateRepository(this, UpdateStore(temp.newFolder()), verifier(), 11, 31)
         val source = Source().apply { block = true }
-        repo.networkChanged(UpdateNetwork("wifi", source)); repo.check(); runCurrent(); repo.download(); runCurrent()
+        repo.networkChanged(UpdateNetwork("wifi", source)); repo.check(); runCurrent(); repo.download(repo.requestDownload()); runCurrent()
         testScheduler.advanceTimeBy(30 * 60_000L); runCurrent()
         assertEquals(UpdatePhase.PAUSED, repo.state.value.phase); assertTrue(repo.state.value.message.contains("超时"))
         assertEquals(1, source.downloads)

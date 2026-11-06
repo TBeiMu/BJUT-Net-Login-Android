@@ -14,7 +14,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 
-data class UpdateNetwork(val key: String, val source: UpdateSource)
+data class UpdateNetwork(val key: String, val source: UpdateSource, val kind: UpdateNetworkKind = UpdateNetworkKind.WIFI) {
+    val identity: String get() = "${kind.name}:$key"
+}
+
+private data class DownloadAuthorization(val id: String, val networkIdentity: String,
+    val manifest: UpdateManifest, val approved: Boolean)
 
 @Serializable
 internal data class SavedUpdate(val manifest: UpdateManifest, val ready: Boolean = false, val etag: String? = null,
@@ -55,14 +60,16 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
     private val verifier: ApkVerifier, private val installedVersion: Long, private val sdk: Int,
     enabled: Boolean = true) {
     private val mutable = MutableStateFlow(UpdateUiState(enabled = enabled,
-        message = if (enabled) "点击检查更新，仅使用 WiFi" else "调试版不提供正式包覆盖更新，请使用发布页"))
+        message = if (enabled) "点击检查更新；使用流量下载前会询问" else "调试版不提供正式包覆盖更新，请使用发布页"))
     val state = mutable.asStateFlow()
     private var network: UpdateNetwork? = null
     private var task: Job? = null
     private var activeNetwork: String? = null
+    private var activeDownloadPermit: String? = null
     private var saved: SavedUpdate? = null
     private var stopMessage = "下载已暂停，请手动继续"
     private var clearing = false
+    private var authorization: DownloadAuthorization? = null
     @Volatile private var generation = 0L
 
     init {
@@ -94,13 +101,17 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
 
     fun networkChanged(value: UpdateNetwork?) {
         network = value
-        if (activeNetwork != null && activeNetwork != value?.key) pause("WiFi 已断开或切换，请手动继续")
+        mutable.update { it.copy(networkKind = value?.kind) }
+        if (authorization != null && authorization?.networkIdentity != value?.identity) {
+            clearAuthorization("更新网络已变化，请重新点击下载")
+        }
+        if (activeNetwork != null && activeNetwork != value?.identity) pause("网络已断开或切换，请手动继续")
     }
 
     fun check() {
         if (!state.value.enabled || task != null || state.value.manifest != null) return
-        val selected = network ?: run { fail("请先连接可上网的 WiFi"); return }
-        activeNetwork = selected.key
+        val selected = network ?: run { fail("请连接可上网的 WiFi 或开启移动数据"); return }
+        activeNetwork = selected.identity
         mutable.value = state.value.copy(phase = UpdatePhase.CHECKING, message = "正在检查更新…")
         task = scope.launch(start = CoroutineStart.LAZY) {
             val ownJob = currentCoroutineContext()[Job]
@@ -116,26 +127,86 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
                     mutable.value = state.value.copy(phase = UpdatePhase.AVAILABLE, manifest = manifest, message = "发现新版本")
                 }
             } catch (_: CancellationException) { fail("检查已停止，请手动重试")
-            } catch (error: Exception) { fail(error.safeUpdateMessage("检查更新失败，请检查 WiFi 后手动重试"))
+            } catch (error: Exception) { fail(error.safeUpdateMessage("检查更新失败，请检查网络后手动重试"))
             } finally { activeNetwork = null; if (task === ownJob) task = null }
         }
         task?.start()
     }
 
-    fun leaveForeground() { if (state.value.phase == UpdatePhase.CHECKING) task?.cancel() }
+    fun leaveForeground() {
+        if (state.value.phase == UpdatePhase.CHECKING) task?.cancel()
+        // Approved starts may already be queued in the foreground service. Unanswered prompts expire.
+        if (state.value.mobileConfirmation != null) clearAuthorization("已取消移动数据下载，可稍后重新选择")
+    }
 
-    fun download(): Boolean {
-        if (!state.value.enabled || task != null) return false
-        val record = saved?.copy(downloadStarted = true) ?: return false
-        if (state.value.phase !in setOf(UpdatePhase.AVAILABLE, UpdatePhase.PAUSED, UpdatePhase.ERROR)) return false
+    /** No download or APK DNS request is made here. Only the selected attempt can obtain a permit. */
+    fun requestDownload(): String? {
+        if (!state.value.enabled || task != null || authorization != null || !canDownload()) return null
+        val manifest = saved?.manifest ?: return null
         val selected = network ?: run {
-            mutable.value = state.value.copy(phase = UpdatePhase.PAUSED, message = "请先连接可上网的 WiFi，再手动继续")
+            installationMessage("请连接可上网的 WiFi 或开启移动数据，再重新点击下载")
+            return null
+        }
+        val request = DownloadAuthorization(java.util.UUID.randomUUID().toString(), selected.identity,
+            manifest, approved = selected.kind == UpdateNetworkKind.WIFI)
+        authorization = request
+        if (!request.approved) {
+            mutable.update { it.copy(mobileConfirmation = MobileDownloadConfirmation(request.id, manifest.versionName, manifest.apkSize)) }
+            return null
+        }
+        mutable.update { it.copy(downloadStarting = true, message = "正在准备 WiFi 下载…") }
+        return request.id
+    }
+
+    fun confirmMobileDownload(id: String): String? {
+        val request = authorization ?: return null
+        if (request.id != id || request.approved || state.value.mobileConfirmation?.id != id) return null
+        if (task != null || !canDownload() || network?.kind != UpdateNetworkKind.CELLULAR ||
+            request.networkIdentity != network?.identity || saved?.manifest != request.manifest) {
+            clearAuthorization("网络或更新版本已变化，请重新点击下载")
+            return null
+        }
+        authorization = request.copy(approved = true)
+        mutable.update { it.copy(mobileConfirmation = null, downloadStarting = true, message = "正在准备移动数据下载…") }
+        return request.id
+    }
+
+    fun dismissMobileDownload(id: String) {
+        if (state.value.mobileConfirmation?.id == id) clearAuthorization("已取消移动数据下载，可连接 WiFi 后下载")
+    }
+
+    fun downloadStartFailed(id: String) {
+        if (authorization?.id == id) clearAuthorization("无法启动后台下载，请回到 App 后重新点击下载")
+    }
+
+    private fun canDownload() = state.value.phase in setOf(UpdatePhase.AVAILABLE, UpdatePhase.PAUSED, UpdatePhase.ERROR)
+
+    private fun clearAuthorization(message: String) {
+        authorization = null
+        mutable.update { it.copy(mobileConfirmation = null, downloadStarting = false, message = message) }
+    }
+
+    fun download(permit: String?): Boolean {
+        if (!state.value.enabled || task != null) return false
+        val request = authorization ?: return false
+        if (permit != request.id || !request.approved) return false
+        authorization = null // Single use, never persisted and never replayed after process restart.
+        mutable.update { it.copy(downloadStarting = false, mobileConfirmation = null) }
+        val record = saved?.copy(downloadStarted = true) ?: return false
+        if (!canDownload()) return false
+        val selected = network ?: run {
+            mutable.value = state.value.copy(phase = UpdatePhase.PAUSED, message = "网络已断开，请重新选择下载")
+            return false
+        }
+        if (request.networkIdentity != selected.identity || request.manifest != record.manifest) {
+            installationMessage("网络或更新版本已变化，请重新点击下载")
             return false
         }
         val token = ++generation
-        activeNetwork = selected.key
+        activeNetwork = selected.identity
+        activeDownloadPermit = permit
         stopMessage = "下载已暂停，请手动继续"
-        mutable.value = state.value.copy(phase = UpdatePhase.DOWNLOADING, message = "正在通过 WiFi 下载…")
+        mutable.value = state.value.copy(phase = UpdatePhase.DOWNLOADING, message = "正在通过${selected.kind.title}下载…")
         task = scope.launch(start = CoroutineStart.LAZY) {
             val ownJob = currentCoroutineContext()[Job]
             try {
@@ -163,11 +234,12 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
                     message = if (generation == token) stopMessage else "任务已取消")
             } catch (error: Exception) {
                 mutable.value = state.value.copy(phase = UpdatePhase.PAUSED,
-                    message = error.safeUpdateMessage("下载已暂停，请检查 WiFi 和存储空间后手动继续"))
+                    message = error.safeUpdateMessage("下载已暂停，请检查网络和存储空间后手动继续"))
             } finally {
                 generation++
                 saved = try { store.load() } catch (_: Exception) { record.copy(etag = null) }
                 activeNetwork = null; if (task === ownJob) task = null
+                if (activeDownloadPermit == permit) activeDownloadPermit = null
             }
         }
         task?.start()
@@ -179,21 +251,27 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
         task?.cancel()
     }
 
-    fun serviceStopped() { if (activeNetwork != null && state.value.phase != UpdatePhase.CHECKING) pause("下载服务已停止，请手动继续") }
+    fun serviceStopped(permit: String?, message: String = "下载服务已停止，请手动继续") {
+        if (permit != null && activeDownloadPermit == permit && task?.isCancelled == false) pause(message)
+    }
 
     fun cancel() {
         if (clearing) return
         clearing = true
+        authorization = null
         val previous = task
         activeNetwork = null
+        activeDownloadPermit = null
         generation++
         previous?.cancel()
-        mutable.value = state.value.copy(phase = UpdatePhase.VERIFYING, message = "正在清理更新文件…")
+        mutable.value = state.value.copy(phase = UpdatePhase.VERIFYING, mobileConfirmation = null,
+            downloadStarting = false, message = "正在清理更新文件…")
         task = scope.launch(start = CoroutineStart.LAZY) {
             previous?.join()
             try {
                 store.clear(); saved = null
-                mutable.value = UpdateUiState(enabled = state.value.enabled, message = "已取消，可重新检查更新")
+                mutable.value = UpdateUiState(enabled = state.value.enabled, networkKind = network?.kind,
+                    message = "已取消，可重新检查更新")
             } catch (_: Exception) { fail("更新文件未能清理，请再次取消")
             } finally { task = null; clearing = false }
         }

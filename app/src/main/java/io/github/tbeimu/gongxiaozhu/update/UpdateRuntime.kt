@@ -11,7 +11,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import io.github.tbeimu.gongxiaozhu.BuildConfig
-import io.github.tbeimu.gongxiaozhu.network.isPhysicalWifi
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.CoroutineScope
@@ -49,36 +48,77 @@ internal fun androidApkVerifier(context: Context) = ApkVerifier(BuildConfig.VERS
         }?.toSet().orEmpty()) }
 }
 
-/** Independent observer: update traffic never uses a portal/billing client or default mobile route. */
+internal fun updateNetworkKind(capabilities: NetworkCapabilities?): UpdateNetworkKind? =
+    capabilities?.let { updateNetworkKind(it::hasTransport, it::hasCapability) }
+
+internal fun updateNetworkKind(hasTransport: (Int) -> Boolean, hasCapability: (Int) -> Boolean): UpdateNetworkKind? {
+    if (!hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) || hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return null
+    // A hybrid transport must never evade mobile-data consent by also advertising WiFi.
+    return when {
+        hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> UpdateNetworkKind.CELLULAR
+        hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> UpdateNetworkKind.WIFI
+        else -> null
+    }
+}
+
+private data class NetworkSnapshot(val capabilities: NetworkCapabilities? = null, val link: LinkProperties? = null)
+
+/** Independent from campus authentication. Every source remains pinned to its selected network. */
 internal fun updateNetworks(context: Context) = callbackFlow {
     val manager = context.getSystemService(ConnectivityManager::class.java)
-    val networks = linkedMapOf<Network, LinkProperties?>()
+    val networks = linkedMapOf<Network, NetworkSnapshot>()
+    var active = manager.activeNetwork
     @Suppress("DEPRECATION")
     manager.allNetworks.forEach {
-        if (isPhysicalWifi(manager.getNetworkCapabilities(it))) networks[it] = manager.getLinkProperties(it)
+        networks[it] = NetworkSnapshot(manager.getNetworkCapabilities(it), manager.getLinkProperties(it))
     }
     fun publish() {
-        val selected = manager.activeNetwork?.takeIf(networks::containsKey)
-            ?: networks.keys.minByOrNull { it.networkHandle }
-        val link = networks[selected]
+        val routes = networks.entries.sortedBy { it.key.networkHandle }.mapNotNull { (network, snapshot) ->
+            val caps = snapshot.capabilities ?: return@mapNotNull null
+            val kind = updateNetworkKind(caps) ?: return@mapNotNull null
+            if (snapshot.link == null || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED) ||
+                (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_FOREGROUND) && network != active)) return@mapNotNull null
+            UpdateRoute(network, kind, caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+        }
+        val selected = selectUpdateRoute(routes, active)
+        val link = networks[selected]?.link
         if (selected == null || link == null) { trySend(null); return }
+        val kind = routes.first { it.id == selected }.kind
         val key = "${selected.networkHandle}:${link.linkAddresses}:${link.routes}:${link.dnsServers}"
         val client = updateClientBuilder().socketFactory(selected.socketFactory).build()
-        trySend(UpdateNetwork(key, HttpUpdateSource(client, WifiUpdateDns.onNetwork(selected))))
+        trySend(UpdateNetwork(key, HttpUpdateSource(client, BoundUpdateDns.onNetwork(selected)), kind))
     }
     val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) { if (!networks.containsKey(network)) networks[network] = null }
+        override fun onAvailable(network: Network) { if (!networks.containsKey(network)) networks[network] = NetworkSnapshot() }
         override fun onLost(network: Network) { networks.remove(network); publish() }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            if (!isPhysicalWifi(capabilities)) networks.remove(network)
+            networks[network] = (networks[network] ?: NetworkSnapshot()).copy(capabilities = capabilities)
             publish()
         }
         override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
-            networks[network] = properties; publish()
+            networks[network] = (networks[network] ?: NetworkSnapshot()).copy(link = properties)
+            publish()
         }
     }
-    manager.registerNetworkCallback(NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-        .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), callback, Handler(Looper.getMainLooper()))
-    publish()
-    awaitClose { manager.unregisterNetworkCallback(callback) }
-}.flowOn(Dispatchers.Main.immediate).distinctUntilChangedBy { it?.key }
+    val defaultCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { active = network; publish() }
+        override fun onLost(network: Network) { if (active == network) active = null; publish() }
+    }
+    val handler = Handler(Looper.getMainLooper())
+    var listening = false
+    var listeningDefault = false
+    try {
+        manager.registerNetworkCallback(NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), callback, handler)
+        listening = true
+        manager.registerDefaultNetworkCallback(defaultCallback, handler)
+        listeningDefault = true
+        publish()
+        awaitClose { }
+    } finally {
+        if (listeningDefault) manager.unregisterNetworkCallback(defaultCallback)
+        if (listening) manager.unregisterNetworkCallback(callback)
+    }
+}.flowOn(Dispatchers.Main.immediate).distinctUntilChangedBy { it?.identity }

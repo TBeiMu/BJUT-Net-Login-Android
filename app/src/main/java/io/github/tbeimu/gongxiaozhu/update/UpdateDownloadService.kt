@@ -27,6 +27,7 @@ class UpdateDownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var repository: UpdateRepository
     private var observing = false
+    private var ownedPermit: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -36,11 +37,20 @@ class UpdateDownloadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == CANCEL) { repository.cancel(); return START_NOT_STICKY }
+        if (intent?.action == CANCEL) {
+            repository.cancel()
+            if (!observing) stopSelf()
+            return START_NOT_STICKY
+        }
         ServiceCompat.startForeground(this, PROGRESS_ID, notification(repository.state.value),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        val permit = intent?.getStringExtra(DOWNLOAD_PERMIT)
+        if (repository.download(permit)) {
+            ownedPermit = permit
+        } else if (!observing) {
+            stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY
+        }
         if (!observing) {
-            if (!repository.download()) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
             observing = true
             scope.launch {
                 repository.state.distinctUntilChangedBy { Triple(it.phase, it.bytes / 65_536, it.message) }.collect { state ->
@@ -83,17 +93,18 @@ class UpdateDownloadService : Service() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        repository.pause("系统已停止下载，请回到 App 手动继续")
+        repository.serviceStopped(ownedPermit, "系统已停止下载，请回到 App 手动继续")
         stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
     }
     override fun onDestroy() {
-        repository.serviceStopped()
+        repository.serviceStopped(ownedPermit)
         scope.cancel(); super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
         const val OPEN_UPDATES = "open_updates"
+        const val DOWNLOAD_PERMIT = "download_permit"
         private const val CHANNEL = "app_updates"
         private const val PROGRESS_ID = 301
         private const val RESULT_ID = 302

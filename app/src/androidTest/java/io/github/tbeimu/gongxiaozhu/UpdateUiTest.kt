@@ -11,6 +11,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.core.content.FileProvider
 import io.github.tbeimu.gongxiaozhu.ui.GongXiaoZhuTheme
 import io.github.tbeimu.gongxiaozhu.ui.UpdateCard
+import io.github.tbeimu.gongxiaozhu.ui.MobileDownloadDialog
+import io.github.tbeimu.gongxiaozhu.update.MobileDownloadConfirmation
 import io.github.tbeimu.gongxiaozhu.update.UpdateManifest
 import io.github.tbeimu.gongxiaozhu.update.UpdatePhase
 import io.github.tbeimu.gongxiaozhu.update.UpdateUiState
@@ -67,5 +69,27 @@ class UpdateUiTest {
             assertThrows(IllegalArgumentException::class.java) { FileProvider.getUriForFile(context, authority, file) }
         }
         assertEquals("content", FileProvider.getUriForFile(context, authority, File(context.filesDir, "updates/verified/update.apk")).scheme)
+    }
+    @Test fun mobileDownloadDialogDisclosesSizeAndWaitsForAgreement() {
+        var confirmed = 0
+        compose.setContent { GongXiaoZhuTheme {
+            MobileDownloadDialog(MobileDownloadConfirmation("fictional", "0.3.2", 3_670_016), { confirmed++ }, {})
+        } }
+        compose.onNodeWithText("使用移动数据下载更新？").assertExists()
+        compose.onNodeWithText("3.5 MB", substring = true).assertExists()
+        compose.runOnIdle { assertEquals(0, confirmed) }
+        compose.onNodeWithText("同意并下载").performClick()
+        compose.runOnIdle { assertEquals(1, confirmed) }
+    }
+    @Test fun cancellingMobileDialogDoesNotApproveDownload() {
+        var confirmed = 0
+        val showing = mutableStateOf(true)
+        compose.setContent { GongXiaoZhuTheme {
+            if (showing.value) MobileDownloadDialog(MobileDownloadConfirmation("fictional", "0.3.2", 1024),
+                { confirmed++ }, { showing.value = false })
+        } }
+        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithText("使用移动数据下载更新？").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(0, confirmed) }
     }
 }

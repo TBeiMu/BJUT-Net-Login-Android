@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +39,7 @@ import io.github.tbeimu.gongxiaozhu.update.UpdateDownloadService
 import io.github.tbeimu.gongxiaozhu.update.UpdatePhase
 import io.github.tbeimu.gongxiaozhu.update.UpdateRuntime
 import io.github.tbeimu.gongxiaozhu.update.UpdateUiState
+import io.github.tbeimu.gongxiaozhu.update.MobileDownloadConfirmation
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -68,18 +70,28 @@ internal fun UpdatePanel() {
         if (context.packageManager.canRequestPackageInstalls()) install()
         else repository.installationMessage("尚未允许工小助安装更新；安装包已保留，可稍后再试")
     }
-    fun download() {
-        try { ContextCompat.startForegroundService(context, Intent(context, UpdateDownloadService::class.java)) }
-        catch (_: Exception) { repository.installationMessage("无法启动后台下载，请回到 App 后重试") }
+    fun startDownload(permit: String) {
+        try {
+            ContextCompat.startForegroundService(context, Intent(context, UpdateDownloadService::class.java)
+                .putExtra(UpdateDownloadService.DOWNLOAD_PERMIT, permit))
+        } catch (_: Exception) { repository.downloadStartFailed(permit) }
     }
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { download() }
+    fun requestDownload() {
+        repository.requestDownload()?.let(::startDownload)
+    }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { requestDownload() }
+    state.mobileConfirmation?.let { confirmation ->
+        MobileDownloadDialog(confirmation, onConfirm = {
+            repository.confirmMobileDownload(confirmation.id)?.let(::startDownload)
+        }, onDismiss = { repository.dismissMobileDownload(confirmation.id) })
+    }
     UpdateCard(state, repository::check, onDownload = {
         val preferences = context.getSharedPreferences("update_ui", android.content.Context.MODE_PRIVATE)
         if (Build.VERSION.SDK_INT >= 33 && !preferences.getBoolean("notification_asked", false) &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             preferences.edit { putBoolean("notification_asked", true) }
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else download()
+        } else requestDownload()
     }, onCancel = repository::cancel, onInstall = {
         if (context.packageManager.canRequestPackageInstalls()) install()
         else try {
@@ -92,17 +104,28 @@ internal fun UpdatePanel() {
 }
 
 @Composable
+internal fun MobileDownloadDialog(confirmation: MobileDownloadConfirmation, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss,
+        title = { Text("使用移动数据下载更新？") },
+        text = { Text("版本 ${confirmation.versionName} 的安装包约 ${String.format(Locale.CHINA, "%.1f", confirmation.apkBytes / 1048576.0)} MB。下载会消耗手机流量，本次是否继续？") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("同意并下载") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+}
+
+@Composable
 internal fun UpdateCard(state: UpdateUiState, onCheck: () -> Unit, onDownload: () -> Unit,
     onCancel: () -> Unit, onInstall: () -> Unit, onReleasePage: () -> Unit) {
     Card(Modifier.fillMaxWidth().testTag("update_card")) {
         Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("应用更新", style = MaterialTheme.typography.titleMedium)
             Text("当前版本 ${BuildConfig.VERSION_NAME}")
+            if (state.enabled) Text("可用更新网络：${state.networkKind?.title ?: "未连接"}", style = MaterialTheme.typography.bodySmall)
             Text(state.message, modifier = Modifier.testTag("update_status"))
             state.manifest?.let { manifest ->
                 Text("新版 ${manifest.versionName} · ${String.format(Locale.CHINA, "%.1f", manifest.apkSize / 1048576.0)} MB")
                 Text(manifest.releaseNotes.ifBlank { "暂无更新说明" }, style = MaterialTheme.typography.bodySmall)
             }
+            if (state.downloadStarting) LinearProgressIndicator(Modifier.fillMaxWidth())
             when (state.phase) {
                 UpdatePhase.DOWNLOADING -> {
                     val size = state.manifest?.apkSize ?: 1
@@ -124,7 +147,7 @@ internal fun UpdateCard(state: UpdateUiState, onCheck: () -> Unit, onDownload: (
                 if ((state.manifest != null || state.phase == UpdatePhase.CHECKING) && state.phase != UpdatePhase.VERIFYING) {
                     OutlinedButton(onClick = onCancel) { Text("取消更新") }
                 }
-                Text("仅使用 WiFi；断开或切换后需手动继续。安装需系统确认，账号与设置会保留。", style = MaterialTheme.typography.bodySmall)
+                Text("优先使用可上网的 WiFi；使用移动数据下载前会询问。切换网络后需手动继续。安装需系统确认，账号与设置会保留。", style = MaterialTheme.typography.bodySmall)
             }
             TextButton(onClick = onReleasePage) { Text("打开发布页") }
         }

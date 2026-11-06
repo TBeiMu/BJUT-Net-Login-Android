@@ -79,7 +79,7 @@ class UpdateDnsTest {
             override suspend fun download(manifest: UpdateManifest, file: File, etag: String?, saveEtag: (String?) -> Unit, progress: (Long) -> Unit) =
                 http.download(manifest, file, etag, saveEtag, progress)
         }))
-        repo.check(); runCurrent(); repo.download(); runCurrent()
+        repo.check(); runCurrent(); repo.download(repo.requestDownload()); runCurrent()
         repo.networkChanged(null); runCurrent()
         assertTrue(dns.cancelled)
         assertEquals(UpdatePhase.PAUSED, repo.state.value.phase)

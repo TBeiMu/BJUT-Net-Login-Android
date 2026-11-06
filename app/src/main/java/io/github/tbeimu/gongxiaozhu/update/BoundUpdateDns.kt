@@ -9,8 +9,8 @@ import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.suspendCancellableCoroutine
 
-/** Each lookup has its own cancellation signal and always uses the captured physical WiFi. */
-internal class WifiUpdateDns(
+/** Each lookup has its own cancellation signal and uses the selected physical network. */
+internal class BoundUpdateDns(
     private val query: (String, CancellationSignal, DnsResolver.Callback<List<InetAddress>>) -> Unit,
 ) : UpdateDns {
     override suspend fun lookup(hostname: String): List<InetAddress> = suspendCancellableCoroutine { continuation ->
@@ -36,12 +36,12 @@ internal class WifiUpdateDns(
             })
         } catch (_: Exception) {
             signal.cancel()
-            finish(Result.failure(UnknownHostException("无法启动 WiFi DNS 查询")))
+            finish(Result.failure(UnknownHostException("无法启动网络解析")))
         }
     }
 
     companion object {
-        fun onNetwork(network: Network): WifiUpdateDns = WifiUpdateDns { host, signal, callback ->
+        fun onNetwork(network: Network): BoundUpdateDns = BoundUpdateDns { host, signal, callback ->
             DnsResolver.getInstance().query(network, host, DnsResolver.FLAG_EMPTY,
                 Executor { it.run() }, signal, callback)
         }

@@ -33,14 +33,31 @@ data class UpdateManifest(
 
 enum class UpdatePhase { IDLE, CHECKING, CURRENT, AVAILABLE, DOWNLOADING, PAUSED, VERIFYING, READY, ERROR }
 
+enum class UpdateNetworkKind(val title: String) { WIFI("WiFi"), CELLULAR("移动数据") }
+
+data class MobileDownloadConfirmation(val id: String, val versionName: String, val apkBytes: Long)
+
+internal data class UpdateRoute<T>(val id: T, val kind: UpdateNetworkKind, val validated: Boolean)
+
+/** Prefer working WiFi, then working mobile data. Unvalidated networks remain a last resort. */
+internal fun <T> selectUpdateRoute(routes: List<UpdateRoute<T>>, active: T?): T? = routes.minWithOrNull(
+    compareBy<UpdateRoute<T>> { if (it.validated) 0 else 1 }
+        .thenBy { if (it.kind == UpdateNetworkKind.WIFI) 0 else 1 }
+        .thenBy { if (it.id == active) 0 else 1 }
+)?.id
+
 data class UpdateUiState(
     val phase: UpdatePhase = UpdatePhase.IDLE,
     val manifest: UpdateManifest? = null,
     val bytes: Long = 0,
-    val message: String = "点击检查更新，仅使用 WiFi",
+    val message: String = "点击检查更新；使用流量下载前会询问",
     val enabled: Boolean = true,
+    val networkKind: UpdateNetworkKind? = null,
+    val mobileConfirmation: MobileDownloadConfirmation? = null,
+    val downloadStarting: Boolean = false,
 ) {
-    val busy: Boolean get() = phase in setOf(UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING, UpdatePhase.VERIFYING)
+    val busy: Boolean get() = downloadStarting || mobileConfirmation != null ||
+        phase in setOf(UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING, UpdatePhase.VERIFYING)
 }
 
 class UpdateFailure(message: String) : Exception(message)

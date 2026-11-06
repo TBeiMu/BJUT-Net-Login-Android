@@ -98,8 +98,8 @@ class HttpUpdateSource(private val client: OkHttpClient, private val dns: Update
             if (!allowedUpdateUrl(url, initial)) throw UpdateFailure("更新地址不受信任，已停止请求")
             val host = url.host
             val addresses = withTimeoutOrNull(15_000) { dns.lookup(host).toList() }
-                ?: throw UpdateFailure("WiFi DNS 查询超时，请手动重试")
-            if (addresses.isEmpty()) throw UpdateFailure("无法解析更新服务器，请检查 WiFi")
+                ?: throw UpdateFailure("网络 DNS 查询超时，请手动重试")
+            if (addresses.isEmpty()) throw UpdateFailure("无法解析更新服务器，请检查网络")
             currentCoroutineContext().ensureActive()
             // OkHttp's synchronous DNS hook only reads the completed result. It never starts another lookup.
             val resolvedClient = client.newBuilder().dns(object : okhttp3.Dns {
