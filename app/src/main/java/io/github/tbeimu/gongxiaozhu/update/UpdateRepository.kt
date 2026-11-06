@@ -17,7 +17,9 @@ import kotlinx.serialization.Serializable
 data class UpdateNetwork(val key: String, val source: UpdateSource)
 
 @Serializable
-internal data class SavedUpdate(val manifest: UpdateManifest, val ready: Boolean = false, val etag: String? = null)
+internal data class SavedUpdate(val manifest: UpdateManifest, val ready: Boolean = false, val etag: String? = null,
+    // null denotes a v0.3.0 record, which did not distinguish discovery from a started download.
+    val downloadStarted: Boolean? = null)
 
 /** Non-secret update metadata; entirely separate from the account vault. */
 class UpdateStore(val directory: File) {
@@ -72,9 +74,16 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
                     mutable.value = state.value.copy(phase = UpdatePhase.CURRENT, message = "已安装新版本，旧安装包已清理")
                 } else {
                     val ready = record.ready && store.verified.isFile
-                    mutable.value = state.value.copy(phase = if (ready) UpdatePhase.READY else UpdatePhase.PAUSED,
+                    val started = record.downloadStarted ?: (record.ready || store.partial.exists() || record.etag != null)
+                    saved = record.copy(downloadStarted = started)
+                    val phase = when { ready -> UpdatePhase.READY; started -> UpdatePhase.PAUSED; else -> UpdatePhase.AVAILABLE }
+                    mutable.value = state.value.copy(phase = phase,
                         manifest = record.manifest, bytes = if (ready) store.verified.length() else store.partial.length(),
-                        message = if (ready) "安装包已下载，点击安装时将重新校验" else "上次下载已暂停，请手动继续")
+                        message = when (phase) {
+                            UpdatePhase.READY -> "安装包已下载，点击安装时将重新校验"
+                            UpdatePhase.PAUSED -> "上次下载已暂停，请手动继续"
+                            else -> "上次检查发现新版本，可手动下载"
+                        })
                 }
             }
         } catch (_: Exception) {
@@ -103,7 +112,7 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
                     fail("新版需要 Android API ${manifest.minSdk} 或以上，请打开发布页查看")
                 } else {
                     store.clear()
-                    saved = SavedUpdate(manifest).also(store::save)
+                    saved = SavedUpdate(manifest, downloadStarted = false).also(store::save)
                     mutable.value = state.value.copy(phase = UpdatePhase.AVAILABLE, manifest = manifest, message = "发现新版本")
                 }
             } catch (_: CancellationException) { fail("检查已停止，请手动重试")
@@ -117,7 +126,7 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
 
     fun download(): Boolean {
         if (!state.value.enabled || task != null) return false
-        val record = saved ?: return false
+        val record = saved?.copy(downloadStarted = true) ?: return false
         if (state.value.phase !in setOf(UpdatePhase.AVAILABLE, UpdatePhase.PAUSED, UpdatePhase.ERROR)) return false
         val selected = network ?: run {
             mutable.value = state.value.copy(phase = UpdatePhase.PAUSED, message = "请先连接可上网的 WiFi，再手动继续")
@@ -131,6 +140,8 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
             val ownJob = currentCoroutineContext()[Job]
             try {
                 withTimeout(30 * 60_000L) {
+                    // Persist user intent before DNS/HTTP, including failures before the first byte.
+                    store.save(record)
                     selected.source.download(record.manifest, store.partial, record.etag,
                         saveEtag = { tag -> store.save(record.copy(etag = tag)) },
                         progress = { count -> mutable.update { if (generation == token) it.copy(bytes = count) else it } })

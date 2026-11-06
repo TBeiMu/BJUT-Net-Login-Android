@@ -16,8 +16,8 @@ android {
         applicationId = "io.github.tbeimu.gongxiaozhu"
         minSdk = 31
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.3.0"
+        versionCode = 13
+        versionName = "0.3.1"
         val releaseCertificate = rootProject.file("release-signing.sha256").readText().trim().lowercase()
         require(Regex("[a-f0-9]{64}").matches(releaseCertificate)) { "正式签名摘要格式错误" }
         buildConfigField("String", "RELEASE_CERT_SHA256", "\"$releaseCertificate\"")

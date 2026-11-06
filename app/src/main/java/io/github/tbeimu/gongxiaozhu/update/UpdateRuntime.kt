@@ -63,11 +63,8 @@ internal fun updateNetworks(context: Context) = callbackFlow {
         val link = networks[selected]
         if (selected == null || link == null) { trySend(null); return }
         val key = "${selected.networkHandle}:${link.linkAddresses}:${link.routes}:${link.dnsServers}"
-        val client = updateClientBuilder().socketFactory(selected.socketFactory)
-            .dns(object : okhttp3.Dns {
-                override fun lookup(hostname: String) = selected.getAllByName(hostname).toList()
-            }).build()
-        trySend(UpdateNetwork(key, HttpUpdateSource(client)))
+        val client = updateClientBuilder().socketFactory(selected.socketFactory).build()
+        trySend(UpdateNetwork(key, HttpUpdateSource(client, WifiUpdateDns.onNetwork(selected))))
     }
     val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { if (!networks.containsKey(network)) networks[network] = null }

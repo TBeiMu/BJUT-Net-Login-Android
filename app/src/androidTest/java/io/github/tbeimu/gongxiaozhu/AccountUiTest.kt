@@ -71,7 +71,11 @@ class AccountUiTest {
         }
         compose.onNodeWithText("设置", substring = false).performClick()
         waitForEnabled("打开 App 自动登录")
-        compose.onNodeWithContentDescription("打开 App 自动登录").assertIsOn().performClick()
+        compose.waitForIdle()
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasText("默认账号已更新，将用于后续登录")).fetchSemanticsNodes().isEmpty()
+        }
+        compose.onNodeWithContentDescription("打开 App 自动登录").assertIsOn().performScrollTo().performClick()
         compose.waitUntil(10_000) { !createAccountRepository(compose.activity).load().settings.autoLogin }
         waitForEnabled("网络模式：宿舍 WiFi")
         // The new update card makes this row scroll to the bottom; wait until the

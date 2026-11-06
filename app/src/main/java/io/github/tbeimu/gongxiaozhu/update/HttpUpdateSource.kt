@@ -7,9 +7,11 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -26,7 +28,7 @@ internal fun updateClientBuilder() = OkHttpClient.Builder()
     .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
     .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
 
-class HttpUpdateSource(private val client: OkHttpClient) : UpdateSource {
+class HttpUpdateSource(private val client: OkHttpClient, private val dns: UpdateDns) : UpdateSource {
     override suspend fun check(): UpdateManifest = request(UPDATE_URL) { response ->
         if (response.code != 200) throw UpdateFailure("检查更新失败（HTTP ${response.code}），请稍后手动重试")
         val body = response.body ?: throw UpdateFailure("更新信息为空")
@@ -88,33 +90,47 @@ class HttpUpdateSource(private val client: OkHttpClient) : UpdateSource {
     }
 
     private suspend fun <T> request(address: String, offset: Long = 0, etag: String? = null,
-        read: (Response) -> T): T = withContext(Dispatchers.IO) {
+        read: (Response) -> T): T {
         val initial = updateHttpUrl(address)
         var url: HttpUrl = initial
         repeat(6) { hop ->
-            ensureActive()
+            currentCoroutineContext().ensureActive()
             if (!allowedUpdateUrl(url, initial)) throw UpdateFailure("更新地址不受信任，已停止请求")
+            val host = url.host
+            val addresses = withTimeoutOrNull(15_000) { dns.lookup(host).toList() }
+                ?: throw UpdateFailure("WiFi DNS 查询超时，请手动重试")
+            if (addresses.isEmpty()) throw UpdateFailure("无法解析更新服务器，请检查 WiFi")
+            currentCoroutineContext().ensureActive()
+            // OkHttp's synchronous DNS hook only reads the completed result. It never starts another lookup.
+            val resolvedClient = client.newBuilder().dns(object : okhttp3.Dns {
+                override fun lookup(hostname: String): List<java.net.InetAddress> {
+                    if (hostname != host) throw java.net.UnknownHostException("更新请求域名发生变化")
+                    return addresses
+                }
+            }).build()
             val builder = Request.Builder().url(url).header("Accept-Encoding", "identity")
             if (offset > 0 && etag != null) builder.header("Range", "bytes=$offset-").header("If-Range", etag)
-            val call = client.newCall(builder.build())
-            val result = coroutineScope {
-                // Cancel the call and wait for its blocking IO to finish before reusing the file.
-                val completed = java.util.concurrent.atomic.AtomicBoolean(false)
-                val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
-                    try { awaitCancellation() } finally { if (!completed.get()) call.cancel() }
-                }
-                try {
-                    call.execute().use { response ->
-                        if (response.code in setOf(301, 302, 303, 307, 308)) {
-                            if (hop == 5) throw UpdateFailure("更新地址跳转次数过多")
-                            url = response.header("Location")?.let { url.resolve(it) }
-                                ?: throw UpdateFailure("更新地址跳转无效")
-                            null
-                        } else Result.success(read(response))
+            val call = resolvedClient.newCall(builder.build())
+            val result = withContext(Dispatchers.IO) {
+                coroutineScope {
+                    // Cancel the call and wait for its blocking IO to finish before reusing the file.
+                    val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+                    val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
+                        try { awaitCancellation() } finally { if (!completed.get()) call.cancel() }
                     }
-                } finally { completed.set(true); cancellation.cancel() }
+                    try {
+                        call.execute().use { response ->
+                            if (response.code in setOf(301, 302, 303, 307, 308)) {
+                                if (hop == 5) throw UpdateFailure("更新地址跳转次数过多")
+                                url = response.header("Location")?.let { url.resolve(it) }
+                                    ?: throw UpdateFailure("更新地址跳转无效")
+                                null
+                            } else Result.success(read(response))
+                        }
+                    } finally { completed.set(true); cancellation.cancel() }
+                }
             }
-            if (result != null) return@withContext result.getOrThrow()
+            if (result != null) return result.getOrThrow()
         }
         throw UpdateFailure("更新地址跳转次数过多")
     }

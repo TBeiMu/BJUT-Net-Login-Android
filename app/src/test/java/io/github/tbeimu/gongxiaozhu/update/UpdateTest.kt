@@ -58,12 +58,13 @@ class UpdateTest {
     private suspend fun http(responses: List<MockResponse>, test: suspend (HttpUpdateSource, MockWebServer) -> Unit) {
         MockWebServer().use { server ->
             responses.forEach(server::enqueue)
-            server.start()
+            server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
             // Transport substitution exists only in test sources. Production URL policy stays active.
             val client = updateClientBuilder().addInterceptor { chain ->
-                chain.proceed(chain.request().newBuilder().url(server.url(chain.request().url.encodedPath)).build())
+                chain.proceed(chain.request().newBuilder().url(server.url(chain.request().url.encodedPath)
+                    .newBuilder().host("127.0.0.1").build()).build())
             }.build()
-            try { test(HttpUpdateSource(client), server) }
+            try { test(HttpUpdateSource(client, UpdateDns { listOf(java.net.InetAddress.getByName("127.0.0.1")) }), server) }
             finally { client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll() }
         }
     }
@@ -192,6 +193,47 @@ class UpdateTest {
         assertEquals(UpdatePhase.PAUSED, repo.state.value.phase); assertEquals(5, repo.state.value.bytes)
         val upgraded = UpdateRepository(this, store, verifier(), 12, 31)
         assertEquals(UpdatePhase.CURRENT, upgraded.state.value.phase); assertFalse(store.partial.exists())
+    }
+    @Test fun checkingWithoutDownloadingRestoresAvailable() = runTest {
+        val store = UpdateStore(temp.newFolder())
+        val source = Source()
+        val repo = UpdateRepository(this, store, verifier(), 11, 31)
+        repo.networkChanged(UpdateNetwork("wifi", source)); repo.check(); runCurrent()
+        val restored = UpdateRepository(this, store, verifier(), 11, 31)
+        assertEquals(UpdatePhase.AVAILABLE, restored.state.value.phase)
+        assertEquals(false, store.load()!!.downloadStarted)
+        assertFalse(store.partial.exists()); assertEquals(0, source.downloads)
+    }
+    @Test fun legacyDiscoveryWithoutDownloadEvidenceRestoresAvailable() = runTest {
+        val store = UpdateStore(temp.newFolder())
+        store.save(SavedUpdate(manifest))
+        assertFalse(File(store.directory, "state.json").readText().contains("downloadStarted"))
+        assertEquals(UpdatePhase.AVAILABLE, UpdateRepository(this, store, verifier(), 11, 31).state.value.phase)
+    }
+    @Test fun failureBeforeFirstByteRemainsPausedAfterRestart() = runTest {
+        val store = UpdateStore(temp.newFolder())
+        val repo = UpdateRepository(this, store, verifier(), 11, 31)
+        repo.networkChanged(UpdateNetwork("wifi", object : UpdateSource {
+            override suspend fun check() = manifest
+            override suspend fun download(manifest: UpdateManifest, file: File, etag: String?, saveEtag: (String?) -> Unit, progress: (Long) -> Unit) {
+                throw UpdateFailure("虚构的连接失败")
+            }
+        }))
+        repo.check(); runCurrent(); repo.download(); runCurrent()
+        assertTrue(store.load()!!.downloadStarted == true)
+        assertFalse(store.partial.exists())
+        assertEquals(UpdatePhase.PAUSED, UpdateRepository(this, store, verifier(), 11, 31).state.value.phase)
+    }
+    @Test fun failedRevalidationOfLegacyReadyApkRetainsStartedState() = kotlinx.coroutines.runBlocking {
+        val store = UpdateStore(temp.newFolder())
+        store.save(SavedUpdate(manifest, ready = true))
+        store.verified.parentFile!!.mkdirs()
+        store.verified.writeText("corrupt")
+        val repo = UpdateRepository(this, store, verifier(), 11, 31)
+        assertEquals(UpdatePhase.READY, repo.state.value.phase)
+        assertNull(repo.prepareInstall())
+        assertEquals(true, store.load()!!.downloadStarted)
+        assertEquals(UpdatePhase.PAUSED, UpdateRepository(this, store, verifier(), 11, 31).state.value.phase)
     }
     @Test fun cancellingWhileWifiPauseIsPendingStillDeletesTheTask() = runTest {
         val store = UpdateStore(temp.newFolder())

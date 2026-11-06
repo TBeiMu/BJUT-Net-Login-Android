@@ -106,7 +106,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0) = GongXiaoZ
     ) { padding ->
         when {
             state.loading -> Box(Modifier.fillMaxSize().padding(padding), Alignment.Center) { CircularProgressIndicator() }
-            state.storageBlocked -> Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            state.storageBlocked && tab != Tab.SETTINGS -> Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 Heading("账号存储暂不可用", "请检查本机账号存储")
                 Text("账号文件可能损坏，或加密密钥不可用。可以先重试；清除本机数据后，需要重新录入全部账号。")
                 Button(onClick = model::reload, enabled = !state.busy) { Text("重试读取") }
@@ -297,28 +297,32 @@ private fun Settings(state: AppUiState, modifier: Modifier, model: AppViewModel)
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         Heading("设置", "按你的习惯连接校园")
         UpdatePanel()
-        Panel {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("打开 App 自动登录", style = MaterialTheme.typography.titleMedium)
-                    Text("每次进入前台最多尝试一次；失败后手动重试", style = MaterialTheme.typography.bodySmall)
-                }
-                Switch(checked = state.data.settings.autoLogin,
-                    onCheckedChange = { model.updateSettings(state.data.settings.copy(autoLogin = it)) }, enabled = !state.busy,
-                    modifier = Modifier.semantics { contentDescription = "打开 App 自动登录" })
-            }
-        }
-        Panel {
-            Text("网络模式", style = MaterialTheme.typography.titleMedium)
-            NetworkMode.entries.forEach { mode ->
+        if (state.storageBlocked) {
+            Panel { Text("账号设置暂不可用，可回到首页重试读取。应用更新仍可使用。") }
+        } else {
+            Panel {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = state.data.settings.networkMode == mode, enabled = !state.busy,
-                        onClick = { model.updateSettings(state.data.settings.copy(networkMode = mode)) },
-                        modifier = Modifier.semantics { contentDescription = "网络模式：${mode.title}" })
-                    Text(mode.title)
+                    Column(Modifier.weight(1f)) {
+                        Text("打开 App 自动登录", style = MaterialTheme.typography.titleMedium)
+                        Text("每次进入前台最多尝试一次；失败后手动重试", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(checked = state.data.settings.autoLogin,
+                        onCheckedChange = { model.updateSettings(state.data.settings.copy(autoLogin = it)) }, enabled = !state.busy,
+                        modifier = Modifier.semantics { contentDescription = "打开 App 自动登录" })
                 }
             }
-            Text("识别有歧义时，请指定当前 WiFi 类型；更改模式后手动登录。", style = MaterialTheme.typography.bodySmall)
+            Panel {
+                Text("网络模式", style = MaterialTheme.typography.titleMedium)
+                NetworkMode.entries.forEach { mode ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = state.data.settings.networkMode == mode, enabled = !state.busy,
+                            onClick = { model.updateSettings(state.data.settings.copy(networkMode = mode)) },
+                            modifier = Modifier.semantics { contentDescription = "网络模式：${mode.title}" })
+                        Text(mode.title)
+                    }
+                }
+                Text("识别有歧义时，请指定当前 WiFi 类型；更改模式后手动登录。", style = MaterialTheme.typography.bodySmall)
+            }
         }
         Panel {
             Text("关于工小助", style = MaterialTheme.typography.titleMedium)
