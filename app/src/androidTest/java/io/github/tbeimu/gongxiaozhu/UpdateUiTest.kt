@@ -1,0 +1,71 @@
+package io.github.tbeimu.gongxiaozhu
+
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.core.content.FileProvider
+import io.github.tbeimu.gongxiaozhu.ui.GongXiaoZhuTheme
+import io.github.tbeimu.gongxiaozhu.ui.UpdateCard
+import io.github.tbeimu.gongxiaozhu.update.UpdateManifest
+import io.github.tbeimu.gongxiaozhu.update.UpdatePhase
+import io.github.tbeimu.gongxiaozhu.update.UpdateUiState
+import org.junit.Assert.*
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+
+@RunWith(AndroidJUnit4::class)
+class UpdateUiTest {
+    @get:Rule val compose = createComposeRule()
+    private val manifest = UpdateManifest(1, "0.3.0", 12, "io.github.tbeimu.gongxiaozhu", 31, 1024, "0".repeat(64), "虚构更新说明")
+
+    @Test fun checkIsManualAndDownloadWaitsForUser() {
+        val state = mutableStateOf(UpdateUiState())
+        var checks = 0; var downloads = 0
+        compose.setContent { GongXiaoZhuTheme { UpdateCard(state.value,
+            onCheck = { checks++; state.value = UpdateUiState(UpdatePhase.AVAILABLE, manifest, message = "发现新版本") },
+            onDownload = { downloads++ }, onCancel = {}, onInstall = {}, onReleasePage = {}) } }
+        compose.runOnIdle { assertEquals(0, checks); assertEquals(0, downloads) }
+        compose.onNodeWithText("检查更新").performClick()
+        compose.onNodeWithText("虚构更新说明").assertExists()
+        compose.runOnIdle { assertEquals(0, downloads) }
+        compose.onNodeWithText("下载更新").performClick()
+        compose.runOnIdle { assertEquals(1, downloads) }
+    }
+    @Test fun pausedDownloadAndCancelRemainActionable() {
+        val state = mutableStateOf(UpdateUiState(UpdatePhase.PAUSED, manifest, 512, "WiFi 已断开或切换，请手动继续"))
+        var resumes = 0
+        compose.setContent { GongXiaoZhuTheme { UpdateCard(state.value, {}, { resumes++ },
+            { state.value = UpdateUiState() }, {}, {}) } }
+        compose.onNodeWithText("继续下载").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(1, resumes) }
+        compose.onNodeWithText("取消更新").performClick()
+        compose.onNodeWithText("检查更新").assertExists()
+    }
+    @Test fun readyApkDoesNotAutomaticallyInvokeInstaller() {
+        var installs = 0
+        compose.setContent { GongXiaoZhuTheme { UpdateCard(UpdateUiState(UpdatePhase.READY, manifest), {}, {}, {}, { installs++ }, {}) } }
+        compose.runOnIdle { assertEquals(0, installs) }
+        compose.onNodeWithTag("install_update").performClick()
+        compose.runOnIdle { assertEquals(1, installs) }
+    }
+    @Test fun debugOnlyOffersReleasePage() {
+        compose.setContent { GongXiaoZhuTheme { UpdateCard(UpdateUiState(enabled = false), {}, {}, {}, {}, {}) } }
+        compose.onNodeWithText("检查更新").assertDoesNotExist()
+        compose.onNodeWithText("打开发布页").assertExists()
+    }
+    @Test fun fileProviderCannotExposeAccountFilesOrPartialDownloads() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val authority = "${context.packageName}.updates"
+        for (file in listOf(File(context.filesDir, "accounts.vault"), File(context.filesDir, "updates/download.part"))) {
+            assertThrows(IllegalArgumentException::class.java) { FileProvider.getUriForFile(context, authority, file) }
+        }
+        assertEquals("content", FileProvider.getUriForFile(context, authority, File(context.filesDir, "updates/verified/update.apk")).scheme)
+    }
+}

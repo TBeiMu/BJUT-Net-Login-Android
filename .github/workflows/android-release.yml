@@ -87,6 +87,13 @@ jobs:
           digest = hashlib.sha256(apk.read_bytes()).hexdigest()
           (assets / 'SHA256SUMS.txt').write_text(digest + '  gongxiaozhu.apk\n', encoding='utf-8')
           PY
+      - name: 生成应用内更新信息
+        run: |
+          python3 scripts/create-update-metadata.py \
+            --apk "$RUNNER_TEMP/release-assets/gongxiaozhu.apk" \
+            --aapt "$ANDROID_HOME/build-tools/36.0.0/aapt" \
+            --tag "$RELEASE_TAG" --notes "docs/releases/$RELEASE_TAG.md" \
+            --output "$RUNNER_TEMP/release-assets/update.json"
       - name: 保存正式 APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -103,7 +110,8 @@ jobs:
           fi
           gh release create "$RELEASE_TAG" --verify-tag --latest --title "工小助 $RELEASE_TAG" \
             --notes-file "docs/releases/$RELEASE_TAG.md" \
-            "$RUNNER_TEMP/release-assets/gongxiaozhu.apk" "$RUNNER_TEMP/release-assets/SHA256SUMS.txt"
+            "$RUNNER_TEMP/release-assets/gongxiaozhu.apk" "$RUNNER_TEMP/release-assets/SHA256SUMS.txt" \
+            "$RUNNER_TEMP/release-assets/update.json"
       - name: 清理临时签名文件
         if: always()
         run: rm -f -- "$RUNNER_TEMP/gongxiaozhu-release.p12"

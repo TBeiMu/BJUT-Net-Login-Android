@@ -1,6 +1,12 @@
 package io.github.tbeimu.gongxiaozhu
 
 import android.os.Bundle
+import android.content.Intent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import io.github.tbeimu.gongxiaozhu.update.UpdateDownloadService
+import io.github.tbeimu.gongxiaozhu.update.UpdateRuntime
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -13,6 +19,7 @@ import io.github.tbeimu.gongxiaozhu.ui.GongXiaoZhuApp
 
 class MainActivity : ComponentActivity() {
     private lateinit var model: AppViewModel
+    private var openUpdatesRequest by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,7 +32,21 @@ class MainActivity : ComponentActivity() {
             }
         }
         model = ViewModelProvider(this, factory)[AppViewModel::class.java]
-        setContent { GongXiaoZhuApp(model) }
+        handleUpdateIntent(intent)
+        setContent { GongXiaoZhuApp(model, openUpdatesRequest) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleUpdateIntent(intent)
+    }
+
+    private fun handleUpdateIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(UpdateDownloadService.OPEN_UPDATES, false) == true) {
+            openUpdatesRequest++
+            intent.removeExtra(UpdateDownloadService.OPEN_UPDATES)
+        }
     }
 
     override fun onStart() {
@@ -35,7 +56,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         // Rotation retains the same foreground entry and ViewModel, so it cannot auto-retry.
-        if (!isChangingConfigurations) model.leaveForeground()
+        if (!isChangingConfigurations) {
+            model.leaveForeground()
+            UpdateRuntime.get(this).repository.leaveForeground()
+        }
         super.onStop()
     }
 }

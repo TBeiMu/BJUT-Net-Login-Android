@@ -72,13 +72,16 @@ private enum class Tab(val title: String, val glyph: String) {
 }
 
 @Composable
-fun GongXiaoZhuApp(model: AppViewModel) = GongXiaoZhuTheme {
+fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0) = GongXiaoZhuTheme {
     val state by model.state.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.HOME) }
     val snackbar = remember { SnackbarHostState() }
     var deleting by remember { mutableStateOf<AccountSummary?>(null) }
     var resetting by remember { mutableStateOf(false) }
     var managing by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(openUpdatesRequest) {
+        if (openUpdatesRequest > 0) { tab = Tab.SETTINGS; managing = false }
+    }
     BackHandler(enabled = managing) { managing = false }
 
     LaunchedEffect(tab, managing, state.loading, state.storageBlocked) {
@@ -293,6 +296,7 @@ private fun Accounts(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, o
 private fun Settings(state: AppUiState, modifier: Modifier, model: AppViewModel) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         Heading("设置", "按你的习惯连接校园")
+        UpdatePanel()
         Panel {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
