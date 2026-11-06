@@ -22,12 +22,13 @@ class BillingControllerTest {
         var selected: String? = null
         var onRefresh: suspend () -> BillingSnapshot = { demoSnapshot }
         var onOffline: suspend () -> Unit = {}
+        var onWebSubmit: suspend () -> BillingWebResult = { BillingWebResult.Success(demoSnapshot) }
         override suspend fun refresh(credentials: AccountDraft, code: String?): BillingSnapshot { calls++; selected = credentials.id; return onRefresh() }
         override suspend fun offlineTip() = "模拟设备注销提示"
         override suspend fun offline(device: OnlineDevice) { offlineCalls++; assertEquals(demoDevice.sessionId, device.sessionId); onOffline() }
         override fun close() { closed = true }
         override suspend fun openWeb(credentials: AccountDraft) = BillingWebPage("fake-token", "https://jfself.bjut.edu.cn/Self/login/", "fake html")
-        override suspend fun submitWeb(token: String, password: String, code: String) = BillingWebResult.Success(demoSnapshot)
+        override suspend fun submitWeb(token: String, password: String, code: String) = onWebSubmit()
     }
     private fun wifi(session: BillingSession, key: String = "wifi-demo") = WifiConnection(key, PortalTransport { "" }) { session }
     private fun draft(id: String) = AccountDraft(id, "模拟", "demo-$id", "demo-only-password")
@@ -202,5 +203,85 @@ class BillingControllerTest {
         assertNotNull(states.last().webPage)
         controller.leaveForeground(); controller.submitWeb("fake-token", "another-demo-password", ""); runCurrent()
         assertNull(states.last().webPage); assertFalse(states.last().running); assertTrue(fake.closed)
+    }
+
+    @Test fun mismatchAfterOfflineClearsDataAndBlocksAnotherOfflineUntilNewLogin() = runTest {
+        val secondDevice = demoDevice.copy(sessionId = "demo-session-2", ip = "192.0.2.20")
+        val fake = FakeSession().apply {
+            onRefresh = {
+                if (calls > 1) throw BillingException(BillingProblem.ACCOUNT_MISMATCH)
+                demoSnapshot.copy(devices = listOf(demoDevice, secondDevice))
+            }
+        }
+        val replacement = FakeSession()
+        var sessions = 0
+        var state = BillingUiState()
+        val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
+        controller.accountChanged("demo-1")
+        controller.wifiChanged(WifiConnection("wifi-demo", PortalTransport { "" }) {
+            if (++sessions == 1) fake else replacement
+        })
+        controller.enterForeground(); controller.query(); runCurrent()
+        controller.requestOffline(demoDevice.sessionId); runCurrent(); controller.confirmOffline(); runCurrent()
+        assertTrue(fake.closed)
+        assertNull(state.snapshot); assertNull(state.loadedAt); assertNull(state.confirmation)
+        assertNull(state.webPage); assertNull(state.captcha); assertFalse(state.running)
+        assertTrue(state.message.contains("学校已确认设备注销"))
+        assertTrue(state.message.contains("账号与所选账号不一致"))
+        assertTrue(state.message.contains("重新登录"))
+        controller.requestOffline(secondDevice.sessionId); controller.confirmOffline(); runCurrent()
+        assertEquals(1, fake.offlineCalls)
+        assertEquals(0, replacement.calls)
+        controller.query(); runCurrent()
+        assertEquals(2, sessions); assertEquals(1, replacement.calls)
+        assertEquals(demoSnapshot, state.snapshot)
+    }
+
+    @Test fun ordinaryRefreshMismatchClearsPreviousSnapshotAndPendingActions() = runTest {
+        val fake = FakeSession()
+        var state = BillingUiState()
+        val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+        fake.onRefresh = { throw BillingException(BillingProblem.ACCOUNT_MISMATCH) }
+        controller.query(); runCurrent()
+        assertTrue(fake.closed); assertNull(state.snapshot); assertNull(state.loadedAt)
+        assertFalse(state.offerWeb); assertFalse(state.running)
+        assertEquals(BillingProblem.ACCOUNT_MISMATCH.hint, state.message)
+        controller.requestOffline(demoDevice.sessionId); controller.confirmOffline(); runCurrent()
+        assertEquals(0, fake.offlineCalls)
+    }
+
+    @Test fun webAccountMismatchClearsCachedDataAndPageInsteadOfKeepingDevices() = runTest {
+        val fake = FakeSession()
+        var state = BillingUiState()
+        val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+        fake.onRefresh = { throw BillingException(BillingProblem.UNCONFIRMED) }
+        controller.query(); runCurrent(); controller.openWeb(); runCurrent()
+        assertNotNull(state.webPage)
+        fake.onWebSubmit = { throw BillingException(BillingProblem.ACCOUNT_MISMATCH) }
+        controller.submitWeb("fake-token", "changed-demo-password", ""); runCurrent()
+        assertTrue(fake.closed); assertNull(state.snapshot); assertNull(state.loadedAt); assertNull(state.webPage)
+        assertFalse(state.offerWeb); assertFalse(state.running)
+        assertEquals(BillingProblem.ACCOUNT_MISMATCH.hint, state.message)
+    }
+
+    @Test fun connectionFailureAfterConfirmedOfflinePreservesKnownOutcomeAndRemainingDevices() = runTest {
+        val remaining = demoDevice.copy(sessionId = "demo-session-2")
+        val fake = FakeSession().apply {
+            onRefresh = {
+                if (calls > 1) throw BillingException(BillingProblem.CONNECTION)
+                demoSnapshot.copy(devices = listOf(demoDevice, remaining))
+            }
+        }
+        var state = BillingUiState()
+        val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+        controller.requestOffline(demoDevice.sessionId); runCurrent(); controller.confirmOffline(); runCurrent()
+        assertFalse(fake.closed); assertFalse(state.running)
+        assertEquals(listOf(remaining), state.snapshot?.devices)
+        assertTrue(state.message.contains("学校已确认设备注销"))
+        assertTrue(state.message.contains("刷新失败"))
+        assertEquals(1, fake.offlineCalls)
     }
 }

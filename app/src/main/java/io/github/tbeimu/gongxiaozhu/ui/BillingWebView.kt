@@ -16,9 +16,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -44,16 +43,29 @@ internal fun BillingWebDialog(page: BillingWebPage, busy: Boolean, message: Stri
         DisposableEffect(Unit) { onUnsupported(); onDispose {} }
         return
     }
-    val context = LocalContext.current
-    val view = remember(page.token) { createBillingWebView(context, page, onSubmit, onCaptcha) }
-    DisposableEffect(view) { onDispose { view.stopLoading(); view.loadUrl("about:blank"); view.clearHistory(); view.clearCache(true); view.destroy() } }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, securePolicy = SecureFlagPolicy.SecureOn)) {
-        Surface(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().padding(16.dp)) {
-            TextButton(onClick = onDismiss) { Text("返回资费") }
-            Text("学校内置网页登录", style = MaterialTheme.typography.titleLarge)
-            Text(if (busy) "正在提交，请勿重复操作…" else message, style = MaterialTheme.typography.bodySmall)
-            AndroidView(factory = { view }, modifier = Modifier.weight(1f), update = { it.isEnabled = !busy })
-        } }
+        Surface(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().padding(16.dp)) {
+                TextButton(onClick = onDismiss) { Text("返回资费") }
+                Text("学校内置网页登录", style = MaterialTheme.typography.titleLarge)
+                Text(if (busy) "正在提交，请勿重复操作…" else message, style = MaterialTheme.typography.bodySmall)
+                // The mounted AndroidView and its WebView must share the page's identity.
+                key(page.token) {
+                    AndroidView(
+                        factory = { createBillingWebView(it, page, onSubmit, onCaptcha) },
+                        modifier = Modifier.weight(1f),
+                        update = { it.isEnabled = !busy },
+                        onRelease = { view ->
+                            view.stopLoading()
+                            view.loadUrl("about:blank")
+                            view.clearHistory()
+                            view.clearCache(true)
+                            view.destroy()
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 

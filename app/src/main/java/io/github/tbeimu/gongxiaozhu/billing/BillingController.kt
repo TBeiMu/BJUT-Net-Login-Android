@@ -105,6 +105,10 @@ class BillingController(
                 if (token == generation) { reset("账号存储不可用，查询已停止", true); storageFailure() }
             } catch (error: BillingException) {
                 if (token == generation) {
+                    if (error.problem == BillingProblem.ACCOUNT_MISMATCH) {
+                        invalidateAccountSession()
+                        return@launch
+                    }
                     emit(state.copy(running = false, message = error.problem.hint,
                         captcha = if (error.problem in listOf(BillingProblem.CAPTCHA, BillingProblem.CAPTCHA_REJECTED)) current.captcha else null,
                         confirmation = null, diagnostics = current.diagnostics,
@@ -180,6 +184,10 @@ class BillingController(
     fun unsupportedWeb() { reset("系统 WebView 不支持安全网页登录，请更新系统 WebView，或打开学校自助服务网页", false) }
 
     private fun webFailed(current: BillingSession, problem: BillingProblem) {
+        if (problem == BillingProblem.ACCOUNT_MISMATCH) {
+            invalidateAccountSession()
+            return
+        }
         emit(state.copy(running = false, webPage = null, offerWeb = false, captcha = null, message = problem.hint, diagnostics = current.diagnostics))
         current.close(); session = null
     }
@@ -231,6 +239,12 @@ class BillingController(
                         storageFailure()
                         null
                     }
+                    catch (error: BillingException) {
+                        if (token == generation && error.problem == BillingProblem.ACCOUNT_MISMATCH) {
+                            invalidateAccountSession()
+                        }
+                        null
+                    }
                     catch (_: Exception) { null }
                 if (token == generation) emit(state.copy(running = false, snapshot = refreshed ?: state.snapshot,
                     loadedAt = if (refreshed != null) System.currentTimeMillis() else state.loadedAt,
@@ -240,6 +254,16 @@ class BillingController(
             catch (_: Exception) { if (token == generation) emit(state.copy(running = false, message = BillingProblem.OFFLINE.hint)) }
             finally { if (token == generation) { offlineSent = false; offlineConfirmed = false } }
         }
+    }
+
+    /** A mismatched identity invalidates both the session and every action derived from its data. */
+    private fun invalidateAccountSession() {
+        val message = (if (offlineConfirmed) "学校已确认设备注销；" else "") + BillingProblem.ACCOUNT_MISMATCH.hint
+        // Preserve the confirmed outcome above instead of reset's generic connection-change message.
+        offlineSent = false
+        offlineConfirmed = false
+        attempted = true
+        reset(message, clearData = true)
     }
 
     private fun reset(message: String, clearData: Boolean) {

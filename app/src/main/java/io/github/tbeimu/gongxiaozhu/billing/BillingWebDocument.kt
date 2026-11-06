@@ -67,12 +67,38 @@ internal object BillingWebDocument {
                 nativeAttribute.call(this,name,value);
               };
               window.gxzSetCaptcha=function(value) { const img=document.getElementById('codeimage'); if(img) nativeSrc.set.call(img,value); };
+              function inputProblem(form) {
+                const field=form.querySelector('[name=password]'), code=form.querySelector('[name=code]');
+                if(!field || !field.value) return '请填写密码';
+                const captcha=document.getElementById('randomDiv');
+                const visible=captcha && !captcha.hidden && !captcha.classList.contains('hide') && !captcha.classList.contains('hidden') &&
+                  getComputedStyle(captcha).display !== 'none' && getComputedStyle(captcha).visibility !== 'hidden';
+                if(visible && (!code || code.value.length !== 4)) return '请填写四位验证码';
+                return '';
+              }
+              function showProblem(form,message) {
+                let error=document.getElementById('gxz-login-error');
+                if(!error) {
+                  error=document.createElement('p'); error.id='gxz-login-error'; error.setAttribute('role','alert');
+                  error.style.color='#b3261e'; form.appendChild(error);
+                }
+                error.textContent=message;
+                if(message && !submitted) form.querySelectorAll('button[type=submit],input[type=submit],button:not([type])').forEach(function(button){button.disabled=false;});
+              }
+              // Validate before the school submit handler can disable its button.
+              document.addEventListener('submit',function(e) {
+                const problem=inputProblem(e.target);
+                if(submitted || problem) {
+                  e.preventDefault(); e.stopImmediatePropagation();
+                  if(problem && !submitted) showProblem(e.target,problem);
+                } else showProblem(e.target,'');
+              },true);
               function submit(form) {
                 if(submitted) return;
+                const problem=inputProblem(form);
+                if(problem) { showProblem(form,problem); return; }
+                showProblem(form,'');
                 const field=form.querySelector('[name=password]'), code=form.querySelector('[name=code]');
-                if(!field || !field.value) return;
-                const captcha=document.getElementById('randomDiv');
-                if(captcha && !captcha.classList.contains('hide') && !captcha.classList.contains('hidden') && code && code.value.length !== 4) return;
                 submitted=true;
                 send({action:'submit',password:field.value,code:code ? code.value : ''});
               }
