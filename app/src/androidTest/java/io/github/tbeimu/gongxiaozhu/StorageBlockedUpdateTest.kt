@@ -5,6 +5,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -34,13 +35,14 @@ class StorageBlockedUpdateTest {
     @get:Rule val rules: RuleChain = RuleChain.outerRule(fixture).around(compose)
 
     @Test fun corruptedVaultKeepsUpdaterAccessibleWithoutExposingAccountSettings() {
+        compose.onNodeWithText("我的").performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("账号存储暂不可用")).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("设置").performClick()
-        compose.onNodeWithTag("update_card").assertExists()
+        compose.onNodeWithText("我的").performClick()
+        compose.onNodeWithTag("update_card").performScrollTo().assertExists()
         compose.onNodeWithText("打开发布页").assertIsEnabled()
         compose.onNodeWithContentDescription("打开 App 自动登录").assertDoesNotExist()
         compose.onNodeWithText("网络模式", substring = false).assertDoesNotExist()
-        compose.onNodeWithText("首页").performClick()
+        compose.onNodeWithText("我的").performClick()
         compose.onNodeWithText("账号存储暂不可用").assertExists()
         assertArrayEquals(corrupt, AndroidVaultStore(compose.activity).read())
     }

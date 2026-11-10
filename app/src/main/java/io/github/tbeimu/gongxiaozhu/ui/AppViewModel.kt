@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import io.github.tbeimu.gongxiaozhu.schedule.ScheduleController
+import io.github.tbeimu.gongxiaozhu.schedule.ScheduleUiState
 
 data class AppUiState(
     val data: AccountState = AccountState(),
@@ -31,6 +33,7 @@ data class AppUiState(
     val editorError: String? = null,
     val login: LoginUiState = LoginUiState(),
     val billing: BillingUiState = BillingUiState(),
+    val schedule: ScheduleUiState = ScheduleUiState(),
 ) {
     override fun toString() = "AppUiState(loading=$loading, busy=$busy, storageBlocked=$storageBlocked)"
 }
@@ -41,6 +44,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
     val state = mutable.asStateFlow()
 
     private val loginController = runtime.controller
+    val scheduleController = ScheduleController(viewModelScope, runtime.schedules)
 
     private val billingController = BillingController(viewModelScope,
         credentials = { id -> withContext(Dispatchers.IO) { repository.credentialsForLogin(id) } },
@@ -52,6 +56,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
     init {
         loginController.awaitAccountReadiness()
         reload()
+        viewModelScope.launch { scheduleController.state.collect { schedule -> mutable.update { it.copy(schedule = schedule) } } }
         viewModelScope.launch { loginController.state.collect { login -> mutable.update { it.copy(login = login) } } }
         viewModelScope.launch { runtime.storageBlocked.collect { blocked ->
             if (blocked) mutable.update { it.copy(storageBlocked = true, editor = null, editorError = null) }
@@ -68,6 +73,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
     }
 
     private fun billingWifiObserved(observation: WifiObservation) {
+        scheduleController.wifiChanged(observation)
         when (observation) {
             WifiObservation.Suspended -> billingController.wifiObservationPaused()
             is WifiObservation.Current -> billingController.wifiChanged(observation.connection)
@@ -78,8 +84,9 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
         runtime.enterForeground()
         billingWifiObserved(runtime.connections.value)
         billingController.enterForeground()
+        scheduleController.enterForeground()
     }
-    fun leaveForeground() { runtime.leaveForeground(); billingController.leaveForeground() }
+    fun leaveForeground() { scheduleController.leaveForeground(); runtime.leaveForeground(); billingController.leaveForeground() }
     fun login() { if (!state.value.busy && state.value.editor == null) loginController.login() }
     fun cancelLogin() = loginController.cancel()
     fun billingVisible(visible: Boolean) = billingController.setVisible(visible)
@@ -107,7 +114,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                mutable.update { AppUiState(loading = false, storageBlocked = true) }
+                mutable.update { it.copy(loading = false, busy = false, storageBlocked = true) }
             }
         }
     }

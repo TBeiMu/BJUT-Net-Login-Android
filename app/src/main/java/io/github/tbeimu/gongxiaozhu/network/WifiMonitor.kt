@@ -18,6 +18,7 @@ import io.github.tbeimu.gongxiaozhu.billing.BillingSession
 import io.github.tbeimu.gongxiaozhu.billing.HttpBillingSession
 
 class WifiConnection(val key: String, val transport: PortalTransport,
+    val scheduleSession: (() -> io.github.tbeimu.gongxiaozhu.schedule.ScheduleSession)? = null,
     val billingSession: (() -> BillingSession)? = null) {
     override fun toString() = "WifiConnection(network=<bound>)"
 }
@@ -57,7 +58,9 @@ class WifiMonitor(context: Context) {
                 val ipv4Client = client.newBuilder()
                     .connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS)
                     .callTimeout(4, TimeUnit.SECONDS).build()
-                trySend(WifiConnection(fingerprint, HttpPortalTransport(client, ipv4Client, BoundNetworkDns.onNetwork(selected))) { HttpBillingSession(client) })
+                trySend(WifiConnection(fingerprint, HttpPortalTransport(client, ipv4Client, BoundNetworkDns.onNetwork(selected)),
+                    scheduleSession = { io.github.tbeimu.gongxiaozhu.schedule.HttpScheduleSession(client, BoundNetworkDns.onNetwork(selected)) },
+                    billingSession = { HttpBillingSession(client) }))
             }
         }
         val callback = object : ConnectivityManager.NetworkCallback() {

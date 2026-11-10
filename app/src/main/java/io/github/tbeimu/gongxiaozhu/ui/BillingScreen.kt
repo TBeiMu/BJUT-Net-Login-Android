@@ -70,6 +70,8 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("校园网资费", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(state.data.defaultAccount?.let { "校园网账号：${it.label} · ${maskUsername(it.username)}" } ?: "请在“我的”添加校园网账号",
+                style = MaterialTheme.typography.bodySmall)
             Text(state.data.defaultAccount?.let { "${it.label} · ${maskUsername(it.username)}" } ?: "请先在首页添加并选择账号",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

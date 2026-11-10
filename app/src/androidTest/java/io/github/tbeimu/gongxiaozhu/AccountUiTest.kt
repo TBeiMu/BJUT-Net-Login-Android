@@ -35,8 +35,9 @@ class AccountUiTest {
     @get:Rule val rules: RuleChain = RuleChain.outerRule(cleanStorage).around(compose)
 
     @Test fun addingEditingAndRestoringDefaultAccount() {
+        compose.onNodeWithText("我的", substring = false).performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("添加校园网账号")).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("添加校园网账号").performClick()
+        compose.onNodeWithText("添加校园网账号").performScrollTo().performClick()
         compose.onNodeWithTag("account_label").performTextInput("模拟测试账号")
         compose.onNodeWithTag("account_username").performTextInput("ui-demo-only")
         compose.onNodeWithTag("account_password").performTextInput("demo-only-password")
@@ -57,6 +58,7 @@ class AccountUiTest {
     }
 
     @Test fun selectingAnotherDefaultAndPersistingSettings() {
+        compose.onNodeWithText("我的", substring = false).performClick()
         waitFor("添加校园网账号")
         add("第一测试账号", "ui-first-demo")
         openManager()
@@ -69,7 +71,7 @@ class AccountUiTest {
         compose.waitUntil(10_000) {
             createAccountRepository(compose.activity).load().defaultAccount?.label == "第二测试账号"
         }
-        compose.onNodeWithText("设置", substring = false).performClick()
+        compose.onNodeWithText("我的", substring = false).performClick()
         waitForEnabled("打开 App 自动登录")
         compose.waitForIdle()
         compose.waitUntil(10_000) {
@@ -89,7 +91,7 @@ class AccountUiTest {
         compose.activityRule.scenario.recreate()
         compose.onNodeWithContentDescription("打开 App 自动登录").assertIsOff()
         compose.onNodeWithContentDescription("网络模式：宿舍 WiFi").assertIsSelected()
-        compose.onNodeWithText("首页", substring = false).performClick()
+        compose.onNodeWithText("我的", substring = false).performClick()
         compose.onNodeWithText("第二测试账号").assertExists()
     }
 
@@ -104,23 +106,28 @@ class AccountUiTest {
     }
 
     private fun openManager() {
-        compose.onNodeWithTag("account_selector").performScrollTo().performClick()
-        waitFor("管理账号")
-        compose.onNodeWithText("管理账号", substring = false).performClick()
+        compose.onNodeWithText("我的", substring = false).performClick()
+        // On compact screens the save snackbar temporarily covers this scrolled row.
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText("账号已加密保存")).fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithText("管理账号", substring = false).performScrollTo().performClick()
+        waitFor("我的账号")
     }
 
     @Test fun billingReplacesAccountTabAndOffersManagementFromFooter() {
+        compose.onNodeWithText("我的", substring = false).performClick()
         waitFor("添加校园网账号")
         compose.onNodeWithText("资费", substring = false).performClick()
         listOf("已用流量", "可用流量", "消费保护", "账户余额").forEach {
             compose.onNodeWithTag("metric_$it").assertExists()
         }
         compose.onNodeWithText("管理账号", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("校园网账号", substring = false).assertExists()
+        openManager()
         compose.onNodeWithText("还没有账号").assertExists()
     }
 
     private fun add(label: String, username: String) {
-        compose.onNodeWithText("添加校园网账号").performClick()
+        compose.onNodeWithText("添加校园网账号").performScrollTo().performClick()
         fillAndSave(label, username)
         waitFor(label)
     }
