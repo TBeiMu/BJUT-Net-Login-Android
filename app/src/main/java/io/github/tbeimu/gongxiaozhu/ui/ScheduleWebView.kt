@@ -7,6 +7,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.ViewGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -40,7 +41,7 @@ internal fun ScheduleWebDialog(page: ScheduleLoginPage, busy: Boolean, message: 
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 key(page.token) {
                     AndroidView(factory = { createScheduleWebView(it, page, onSubmit, resource) },
-                        update = { it.isEnabled = !busy }, modifier = Modifier.weight(1f), onRelease = {
+                        update = { it.isEnabled = !busy }, modifier = Modifier.fillMaxWidth().weight(1f), onRelease = {
                             it.stopLoading(); it.loadUrl("about:blank"); it.clearHistory(); it.clearCache(true); it.destroy()
                         })
                 }
@@ -53,6 +54,9 @@ internal fun ScheduleWebDialog(page: ScheduleLoginPage, busy: Boolean, message: 
 @Suppress("DEPRECATION")
 internal fun createScheduleWebView(context: android.content.Context, page: ScheduleLoginPage,
     onSubmit: (String, Map<String, String>) -> Unit, resource: suspend (String, String) -> ScheduleResource?): WebView = WebView(context).apply {
+    // AndroidView's default WRAP_CONTENT height gives CSS percentage/vh frames a zero-height viewport.
+    // Match the region allocated by Compose before loading any school document.
+    layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     settings.javaScriptEnabled = true
     settings.blockNetworkLoads = true
     settings.domStorageEnabled = false; settings.databaseEnabled = false
