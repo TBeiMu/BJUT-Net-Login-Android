@@ -45,6 +45,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
     val state = mutable.asStateFlow()
 
     private val loginController = runtime.controller
+    val connectionNotice = runtime.connectionNotice
     val scheduleController = ScheduleController(viewModelScope, runtime.schedules)
     private var scheduleMonitoring: Job? = null
 

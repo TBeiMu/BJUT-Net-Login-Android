@@ -24,6 +24,7 @@ class CampusLoginRuntime private constructor(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val accounts = createAccountRepository(context)
     val schedules = io.github.tbeimu.gongxiaozhu.schedule.createScheduleRepository(context)
+    val connectionNotice = CampusConnectionNotice()
     val scheduleConnections = io.github.tbeimu.gongxiaozhu.schedule.scheduleNetworks(context)
     private val blocked = MutableStateFlow(false)
     val storageBlocked = blocked.asStateFlow()
@@ -38,14 +39,21 @@ class CampusLoginRuntime private constructor(context: Context) {
             Intent(context, CampusLoginService::class.java).putExtra(CampusLoginService.TASK_ID, id)); Unit },
         storageFailure = { blocked.value = true })
 
-    init { scope.launch { controller.state.collect { if (!it.running && !foreground) stopMonitoring() } } }
+    init { scope.launch { controller.state.collect {
+        connectionNotice.update(it)
+        if (!it.running && !foreground) stopMonitoring()
+    } } }
 
     fun enterForeground() {
         foreground = true
         if (monitoring == null) {
             controller.awaitWifiSnapshot()
             monitoring = scope.launch {
-                monitor.connections.collect { wifi.value = WifiObservation.Current(it); controller.wifiChanged(it) }
+                monitor.connections.collect {
+                    wifi.value = WifiObservation.Current(it)
+                    controller.wifiChanged(it)
+                    connectionNotice.resumeObservation(controller.state.value)
+                }
             }
         }
         controller.enterForeground()
@@ -61,6 +69,7 @@ class CampusLoginRuntime private constructor(context: Context) {
         monitoring?.cancel()
         monitoring = null
         wifi.value = WifiObservation.Suspended
+        connectionNotice.suspendObservation()
     }
     fun storageReloaded() { blocked.value = false }
 

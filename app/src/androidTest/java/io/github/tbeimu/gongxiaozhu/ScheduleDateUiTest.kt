@@ -29,7 +29,7 @@ class ScheduleDateUiTest {
                 ScheduleScreen(state, Modifier, {}, {}, {}, {}, todayProvider = date::get)
             }
         }
-        compose.onNodeWithText("第 1 周 ▾").assertExists()
+        compose.onNodeWithText("第 1 周").assertExists()
     }
 
     @Test fun returningToForegroundRefreshesDateWithoutReimporting() {
@@ -37,15 +37,17 @@ class ScheduleDateUiTest {
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         date.set(monday.plusWeeks(1))
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
-        compose.onNodeWithText("本周", substring = false).performClick()
-        compose.onNodeWithText("第 2 周 ▾").assertExists()
+        compose.onNodeWithText("回到本周", substring = false).performClick()
+        compose.onNodeWithText("第 2 周").assertExists()
     }
 
     @Test fun thisWeekRechecksClockAtClickTime() {
         showSchedule()
+        compose.onNodeWithContentDescription("选择周次").performClick()
+        compose.onNodeWithTag("week_choice_2").performClick()
         date.set(monday.plusWeeks(1))
-        compose.onNodeWithText("本周", substring = false).performClick()
-        compose.onNodeWithText("第 2 周 ▾").assertExists()
+        compose.onNodeWithText("回到本周", substring = false).performClick()
+        compose.onNodeWithText("第 2 周").assertExists()
     }
 
     @Test fun semesterBoundaryUpdatesDisabledThisWeekButtonOnResume() {
@@ -53,7 +55,7 @@ class ScheduleDateUiTest {
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         date.set(monday.plusWeeks(3))
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
-        compose.onNodeWithText("本周", substring = false).assertIsNotEnabled()
-        compose.onNodeWithText("当前日期不在已导入学期内").assertExists()
+        compose.onNodeWithText("回到本周", substring = false).assertDoesNotExist()
+        compose.onNodeWithText("第 1 周").assertExists()
     }
 }

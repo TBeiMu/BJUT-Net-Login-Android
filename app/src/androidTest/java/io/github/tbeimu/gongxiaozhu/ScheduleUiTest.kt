@@ -22,6 +22,17 @@ class ScheduleUiTest {
         override fun before() {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             check(context.packageName.endsWith(".debug"))
+            if (InstrumentationRegistry.getArguments().getString("preview_wallpaper") == "true") {
+                val bitmap = android.graphics.Bitmap.createBitmap(240, 480, android.graphics.Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(bitmap)
+                val paint = android.graphics.Paint().apply {
+                    shader = android.graphics.LinearGradient(0f, 0f, 240f, 480f,
+                        intArrayOf(0xFF12516D.toInt(), 0xFFDDD3AD.toInt(), 0xFF366477.toInt()), null, android.graphics.Shader.TileMode.CLAMP)
+                }
+                canvas.drawRect(0f, 0f, 240f, 480f, paint)
+                File(context.noBackupFilesDir, "wallpaper.jpg").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it) }
+                bitmap.recycle()
+            }
             createAccountRepository(context).apply {
                 reset(); load(); save(AccountDraft(label = "测试校园网", username = "fake-campus-user", password = "fake-only"))
                 settings(AppSettings(autoLogin = false))
@@ -44,27 +55,36 @@ class ScheduleUiTest {
         override fun after() {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             createScheduleRepository(context).clear(); createAccountRepository(context).reset()
+            if (InstrumentationRegistry.getArguments().getString("preview_wallpaper") == "true") File(context.noBackupFilesDir, "wallpaper.jpg").delete()
         }
     }
     @get:Rule val rules: RuleChain = RuleChain.outerRule(fixture).around(compose)
 
     @Test fun nativeWeekTableAndMyPageKeepSeparateAccounts() {
         compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("schedule_pager")).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("第 2 周 ▾").assertExists()
+        compose.onNodeWithText("第 2 周").assertExists()
         screenshot("schedule-preview.png")
-        compose.onNodeWithText("2 门重叠").performClick()
+        compose.onNodeWithText("重叠课").performClick()
         compose.onNodeWithText("重叠课程 · 2 门").assertExists()
         compose.onNodeWithText("关闭").performClick()
-        compose.onNodeWithText("第 2 周 ▾").performClick()
-        compose.onNodeWithText("第 1 周", substring = false).performClick()
-        compose.waitUntil(5_000) { compose.onAllNodes(hasText("本周无课 · 学校已返回空课表")).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("schedule_pager").performTouchInput { swipeLeft() }
-        compose.waitUntil(5_000) { compose.onAllNodes(hasText("第 2 周 ▾")).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("本周", substring = false).performClick()
+        compose.onNodeWithText("第 2 周").performClick()
+        compose.onNodeWithTag("week_choice_1").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("本周无课")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("我的", substring = false).performClick()
-        compose.onNodeWithText("你好，示例同学").assertExists()
-        compose.onNodeWithText("测试校园网").assertExists()
+        compose.onNodeWithTag("my_SCHEDULE").performClick()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithText("课表", substring = false).performClick()
+        compose.onNodeWithTag("schedule_week_title").assertTextContains("第 1 周")
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("schedule_week_title").assertTextContains("第 1 周")
+        compose.onNodeWithText("回到本周").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("第 2 周")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("schedule_status").assertDoesNotExist()
+        compose.onNodeWithText("我的", substring = false).performClick()
+        compose.onNodeWithText("示例同学").assertExists()
+        compose.onNodeWithTag("my_ACCOUNTS").assertExists()
         screenshot("my-preview.png")
+        compose.onNodeWithTag("my_SCHEDULE").performClick()
         compose.onNodeWithText("更换 / 解绑课表账号").performScrollTo().performClick()
         compose.onNodeWithText("取消", substring = false).performClick()
         compose.onNodeWithText("资费", substring = false).performClick()
@@ -75,6 +95,8 @@ class ScheduleUiTest {
         val inst = InstrumentationRegistry.getInstrumentation()
         inst.waitForIdleSync()
         val bitmap = inst.uiAutomation.takeScreenshot() ?: return
-        File(inst.targetContext.getExternalFilesDir(null), name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        val file = File(inst.targetContext.getExternalFilesDir(null), name)
+        file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(inst.uiAutomation.executeShellCommand("cp ${file.absolutePath} /sdcard/Download/gxz-v042-$name")).use { it.readBytes() }
     }
 }

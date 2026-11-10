@@ -15,10 +15,12 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.ZoneId
 
+enum class ScheduleNotice { IDLE, PROGRESS, SUCCESS, PAUSED, ERROR }
+
 data class ScheduleUiState(val data: ScheduleData = ScheduleData(), val loading: Boolean = true,
     val busy: Boolean = false, val blocked: Boolean = false, val page: ScheduleLoginPage? = null,
     val message: String = "导入研究生课表，离线也能查看整个学期", val imported: Int = 0, val total: Int = 0,
-    val networkKind: ScheduleNetworkKind? = null)
+    val networkKind: ScheduleNetworkKind? = null, val notice: ScheduleNotice = ScheduleNotice.IDLE)
 
 class ScheduleController(private val scope: CoroutineScope, private val repository: ScheduleRepository,
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO) {
@@ -54,9 +56,10 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
             try { val data = io { repository.load() }; mutable.value = ScheduleUiState(data, loading = false,
                 imported = data.pending?.weeks?.size ?: 0, total = data.pending?.term?.weekCount ?: 0,
                 networkKind = network?.kind,
+                notice = if (data.pending != null) ScheduleNotice.PAUSED else ScheduleNotice.IDLE,
                 message = if (data.pending != null) "上次导入尚未完成，可重新登录继续" else "课表仅保存于本机") }
             catch (_: ScheduleException) { mutable.value = ScheduleUiState(loading = false, blocked = true,
-                networkKind = network?.kind, message = ScheduleProblem.STORAGE.hint) }
+                networkKind = network?.kind, notice = ScheduleNotice.ERROR, message = ScheduleProblem.STORAGE.hint) }
         }
     }
 
@@ -66,14 +69,14 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         session?.close()
         val active = selected.session().also { session = it }
         networkTask = true
-        mutable.value = state.value.copy(page = null, message = "正在通过${selected.kind.title}打开学校统一身份认证…")
+        mutable.value = state.value.copy(page = null, notice = ScheduleNotice.PROGRESS, message = "正在打开学校登录页…")
         runTask { handle(active.open(), active) }
     }
 
     fun submit(token: String, values: Map<String, String>) {
         val active = session ?: return
         if (!foreground || !observed || job != null || state.value.page?.token != token) return
-        mutable.value = state.value.copy(message = "正在由学校验证登录…")
+        mutable.value = state.value.copy(notice = ScheduleNotice.PROGRESS, message = "正在由学校验证登录…")
         runTask { handle(active.submit(token, values), active) }
     }
 
@@ -99,6 +102,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
                 currentCoroutineContext().ensureActive()
                 var data = io { repository.begin(gate.identity, gate.term) }
                 mutable.value = state.value.copy(data = data, page = null, imported = data.pending!!.weeks.size,
+                    notice = ScheduleNotice.PROGRESS,
                     total = gate.term.weekCount, message = "正在导入当前学期，请保持 App 在前台")
                 for (number in 1..gate.term.weekCount) {
                     if (data.pending!!.weeks.any { it.number == number }) continue
@@ -111,6 +115,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
                 }
                 data = io { repository.finish(System.currentTimeMillis()) }
                 mutable.value = state.value.copy(data = data, imported = gate.term.weekCount,
+                    notice = ScheduleNotice.SUCCESS,
                     message = "整学期导入完成，可离线查看；课表来自学校")
                 active.close(); if (session === active) session = null
                 networkTask = false
@@ -124,7 +129,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         session?.close(); session = null
         networkTask = false
         job?.cancel()
-        mutable.value = state.value.copy(page = null, message = text)
+        mutable.value = state.value.copy(page = null, notice = ScheduleNotice.PAUSED, message = text)
     }
 
     /** Only invoked after the UI confirms replacement/unbinding or damaged-cache recovery. */
@@ -139,7 +144,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         }
     }
     fun unsupportedWebView() { pause(ScheduleProblem.WEBVIEW.hint) }
-    fun message(text: String) { mutable.value = state.value.copy(message = text) }
+    fun message(text: String) { mutable.value = state.value.copy(message = text, notice = ScheduleNotice.ERROR) }
 
     private fun runTask(replace: Boolean = false, action: suspend () -> Unit) {
         if (!replace && job != null) return
@@ -174,7 +179,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         if (generation != token) return
         session?.close(); session = null
         networkTask = false
-        mutable.value = state.value.copy(page = null, message = problem.hint,
+        mutable.value = state.value.copy(page = null, message = problem.hint, notice = ScheduleNotice.ERROR,
             blocked = problem == ScheduleProblem.STORAGE)
     }
     private suspend fun <T> io(block: () -> T): T = withContext(ioDispatcher) { block() }

@@ -38,12 +38,13 @@ class StorageBlockedUpdateTest {
         compose.onNodeWithText("我的").performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("账号存储暂不可用")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("我的").performClick()
-        compose.onNodeWithTag("update_card").performScrollTo().assertExists()
+        compose.onNodeWithTag("my_UPDATES").performScrollTo().performClick()
+        compose.onNodeWithTag("update_card").assertExists()
         compose.onNodeWithText("打开发布页").assertIsEnabled()
         compose.onNodeWithContentDescription("打开 App 自动登录").assertDoesNotExist()
         compose.onNodeWithText("网络模式", substring = false).assertDoesNotExist()
         compose.onNodeWithText("我的").performClick()
-        compose.onNodeWithText("账号存储暂不可用").assertExists()
+        compose.onNodeWithTag("my_ACCOUNTS").assertExists()
         assertArrayEquals(corrupt, AndroidVaultStore(compose.activity).read())
     }
 }

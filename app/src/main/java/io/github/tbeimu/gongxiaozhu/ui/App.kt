@@ -2,8 +2,6 @@ package io.github.tbeimu.gongxiaozhu.ui
 
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -70,7 +69,7 @@ import io.github.tbeimu.gongxiaozhu.data.AccountDraft
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 
-private enum class Tab(val title: String) {
+internal enum class Tab(val title: String) {
     SCHEDULE("课表"), BILLING("资费"), MY("我的")
 }
 
@@ -80,21 +79,24 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     var tab by rememberSaveable { mutableStateOf(Tab.SCHEDULE) }
     val snackbar = remember { SnackbarHostState() }
     val wallpaper = rememberWallpaper()
-    var focusMy by remember { mutableStateOf<String?>(null) }
+    var destination by rememberSaveable { mutableStateOf<MyDestination?>(null) }
+    var returnTab by rememberSaveable { mutableStateOf(Tab.MY) }
+    val pages = rememberSaveableStateHolder()
+    fun open(page: MyDestination, from: Tab = tab) { returnTab = from; tab = Tab.MY; destination = page }
+    fun back() { destination = null; tab = returnTab }
     var resetSchedule by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<AccountSummary?>(null) }
     var resetting by remember { mutableStateOf(false) }
-    var managing by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(openUpdatesRequest) {
-        if (openUpdatesRequest > 0) { tab = Tab.MY; managing = false; focusMy = "updates" }
+        if (openUpdatesRequest > 0) open(MyDestination.UPDATES, Tab.MY)
     }
     LaunchedEffect(openLoginRequest) {
-        if (openLoginRequest > 0) { tab = Tab.MY; managing = false; focusMy = "network" }
+        if (openLoginRequest > 0) open(MyDestination.NETWORK, Tab.MY)
     }
-    BackHandler(enabled = managing) { managing = false }
+    BackHandler(enabled = destination != null) { back() }
 
-    LaunchedEffect(tab, managing, state.loading, state.storageBlocked) {
-        model.billingVisible(tab == Tab.BILLING && !managing && !state.loading && !state.storageBlocked)
+    LaunchedEffect(tab, destination, state.loading, state.storageBlocked) {
+        model.billingVisible(tab == Tab.BILLING && destination == null && !state.loading && !state.storageBlocked)
     }
 
     LaunchedEffect(state.message) {
@@ -109,29 +111,35 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .86f)) {
                 Tab.entries.forEach { item ->
-                    NavigationBarItem(selected = tab == item, onClick = { tab = item; managing = false; focusMy = null },
+                    NavigationBarItem(selected = tab == item, onClick = { tab = item; destination = null },
                         icon = { NavigationGlyph(item.ordinal) },
                         label = { Text(item.title) })
                 }
             }
         },
     ) { padding ->
-        when {
-            managing -> Column(Modifier.padding(padding).fillMaxSize()) {
-                TextButton(onClick = { managing = false }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("返回") }
-                Accounts(state, Modifier.weight(1f), model::addAccount, model::editAccount, model::setDefault, onDelete = { deleting = it })
-            }
-            else -> when (tab) {
-                Tab.SCHEDULE -> ScheduleScreen(state.schedule, Modifier.padding(padding), model.scheduleController::start,
-                    { model.scheduleController.pause() }, model.scheduleController::reload, { tab = Tab.MY })
+        val pageKey = destination?.let { "detail/${it.name}" } ?: "tab/${tab.name}"
+        pages.SaveableStateProvider(pageKey) {
+            val selected = destination
+            if (selected != null) {
+                MyDetailScreen(selected, state, Modifier.padding(padding), model, wallpaper,
+                    onBack = ::back, onResetAccounts = { resetting = true },
+                    onResetSchedule = { resetSchedule = true }, onDelete = { deleting = it })
+            } else when (tab) {
+                Tab.SCHEDULE -> Box(Modifier.padding(padding).fillMaxSize()) {
+                    ScheduleScreen(state.schedule, Modifier, model.scheduleController::start,
+                        { model.scheduleController.pause() }, model.scheduleController::reload,
+                        { open(MyDestination.SCHEDULE, Tab.SCHEDULE) })
+                    CampusConnectedBanner(model.connectionNotice, state.login,
+                        unobstructed = state.schedule.page == null && state.editor == null)
+                }
                 Tab.BILLING -> if (state.storageBlocked) Column(Modifier.padding(padding).padding(24.dp)) {
                     Text("校园网账号存储暂不可用")
-                    Button(onClick = { tab = Tab.MY }) { Text("到我的页面处理") }
-                } else BillingScreen(state, Modifier.padding(padding), onAccounts = { tab = Tab.MY },
+                    Button(onClick = { open(MyDestination.ACCOUNTS, Tab.BILLING) }) { Text("处理账号存储") }
+                } else BillingScreen(state, Modifier.padding(padding),
+                    onAccounts = { open(MyDestination.ACCOUNTS, Tab.BILLING) },
                     onQuery = model::queryBilling, onOffline = model::requestOffline)
-                Tab.MY -> MyScreen(state, Modifier.padding(padding), model, wallpaper,
-                    onAccounts = { managing = true }, onResetAccounts = { resetting = true },
-                    onResetSchedule = { resetSchedule = true }, focus = focusMy, onFocused = { focusMy = null })
+                Tab.MY -> MyHomeScreen(state, Modifier.padding(padding)) { open(it, Tab.MY) }
             }
         }
     }
@@ -188,7 +196,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
 }
 
 @Composable
-private fun Heading(title: String, subtitle: String) {
+internal fun Heading(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -196,7 +204,7 @@ private fun Heading(title: String, subtitle: String) {
 }
 
 @Composable
-private fun Panel(content: @Composable () -> Unit) {
+internal fun Panel(content: @Composable () -> Unit) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
@@ -204,7 +212,7 @@ private fun Panel(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun NetworkPanel(state: AppUiState, model: AppViewModel) {
+internal fun NetworkPanel(state: AppUiState, model: AppViewModel) {
     Panel {
         Text("校园网连接", style = MaterialTheme.typography.titleMedium)
         Text(if (state.login.wifiConnected) "WiFi 已连接" else "等待连接 WiFi")
@@ -228,7 +236,7 @@ private fun NetworkPanel(state: AppUiState, model: AppViewModel) {
 }
 
 @Composable
-private fun AccountSelector(state: AppUiState, onSelect: (String) -> Unit, onAdd: () -> Unit, onAccounts: () -> Unit) {
+internal fun AccountSelector(state: AppUiState, onSelect: (String) -> Unit, onAdd: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxWidth()) {
         OutlinedButton(onClick = { expanded = true }, enabled = !state.busy,
@@ -249,16 +257,16 @@ private fun AccountSelector(state: AppUiState, onSelect: (String) -> Unit, onAdd
             }
             if (state.data.accounts.isNotEmpty()) HorizontalDivider()
             DropdownMenuItem(text = { Text("添加账号") }, onClick = { expanded = false; onAdd() })
-            DropdownMenuItem(text = { Text("管理账号") }, onClick = { expanded = false; onAccounts() })
         }
     }
 }
 
 @Composable
-private fun Accounts(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onEdit: (String) -> Unit,
+internal fun Accounts(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onEdit: (String) -> Unit,
     onDefault: (String) -> Unit, onDelete: (AccountSummary) -> Unit) {
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        item { Heading("我的账号", "已保存 ${state.data.accounts.size} 个账号 · 密码不会在列表显示") }
+        item { AccountSelector(state, onDefault, onAdd) }
+        item { Text("已保存 ${state.data.accounts.size} 个账号", style = MaterialTheme.typography.bodySmall) }
         item { Button(onClick = onAdd, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("添加账号") } }
         if (state.data.accounts.isEmpty()) item {
             Panel { Text("还没有账号", style = MaterialTheme.typography.titleLarge); Text("添加校园网账号和密码，后续自动登录将使用默认账号。") }
@@ -282,96 +290,6 @@ private fun Accounts(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, o
             }
         }
         item { Text("切换默认账号不会退出当前网络会话。", style = MaterialTheme.typography.bodySmall) }
-    }
-}
-
-@Composable
-private fun MyScreen(state: AppUiState, modifier: Modifier, model: AppViewModel, wallpaper: WallpaperState,
-    onAccounts: () -> Unit, onResetAccounts: () -> Unit, onResetSchedule: () -> Unit,
-    focus: String?, onFocused: () -> Unit) {
-    val network = remember { BringIntoViewRequester() }
-    val updates = remember { BringIntoViewRequester() }
-    LaunchedEffect(focus) {
-        if (focus != null) {
-            androidx.compose.runtime.withFrameNanos { }
-            if (focus == "updates") updates.bringIntoView() else network.bringIntoView()
-            onFocused()
-        }
-    }
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        val identity = state.schedule.data.identity
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Box(Modifier.size(64.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(22.dp)), contentAlignment = Alignment.Center) {
-                Text("工", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
-            }
-            Heading("你好，${identity?.name?.ifBlank { "同学" } ?: "同学"}", identity?.let { "课表学号 ${maskUsername(it.studentId)}" } ?: "在工小助，安排好校园每一天")
-        }
-        Panel {
-            Text("研究生课表", style = MaterialTheme.typography.titleMedium)
-            Text(identity?.let { "已绑定 ${maskUsername(it.studentId)} · 独立于校园网账号" } ?: "尚未绑定课表账号")
-            Text("课表网络：${state.schedule.networkKind?.title ?: "暂不可用"} · 支持移动数据", style = MaterialTheme.typography.bodySmall)
-            Text(state.schedule.message, style = MaterialTheme.typography.bodySmall)
-            if (state.schedule.blocked) TextButton(onClick = model.scheduleController::reload, enabled = !state.schedule.busy) { Text("重试读取课表") }
-            else Button(onClick = model.scheduleController::start, enabled = !state.schedule.busy && !state.schedule.loading) { Text(if (identity == null) "导入研究生课表" else "登录并刷新课表") }
-            if (identity != null || state.schedule.blocked) TextButton(onClick = onResetSchedule, enabled = !state.schedule.busy) { Text("更换 / 解绑课表账号") }
-        }
-        if (!state.loading && !state.storageBlocked) {
-            Panel {
-                Text("校园网账号", style = MaterialTheme.typography.titleMedium)
-                AccountSelector(state, model::setDefault, model::addAccount, onAccounts)
-                TextButton(onClick = onAccounts) { Text("管理账号") }
-                if (state.data.accounts.isEmpty()) Button(onClick = model::addAccount) { Text("添加校园网账号") }
-            }
-            Box(Modifier.bringIntoViewRequester(network)) { NetworkPanel(state, model) }
-        }
-        Text("设置", style = MaterialTheme.typography.titleLarge)
-        Panel {
-            Text("个性化背景", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = wallpaper.choose, enabled = !wallpaper.busy) { Text("更换壁纸") }
-                TextButton(onClick = wallpaper.clear, enabled = !wallpaper.busy) { Text("恢复默认背景") }
-            }
-            wallpaper.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        }
-        Box(Modifier.bringIntoViewRequester(updates)) { UpdatePanel() }
-        if (state.storageBlocked) {
-            Panel {
-                Text("账号存储暂不可用", style = MaterialTheme.typography.titleMedium)
-                Text("校园网账号设置暂不可用；课表和应用更新可独立使用。")
-                Button(onClick = model::reload, enabled = !state.busy) { Text("重试读取") }
-                TextButton(onClick = onResetAccounts, enabled = !state.busy) { Text("清除本机账号并重新录入") }
-            }
-        } else {
-            Panel {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("打开 App 自动登录", style = MaterialTheme.typography.titleMedium)
-                        Text("每次进入前台最多尝试一次；失败后手动重试", style = MaterialTheme.typography.bodySmall)
-                    }
-                    Switch(checked = state.data.settings.autoLogin,
-                        onCheckedChange = { model.updateSettings(state.data.settings.copy(autoLogin = it)) }, enabled = !state.busy,
-                        modifier = Modifier.semantics { contentDescription = "打开 App 自动登录" })
-                }
-            }
-            Panel {
-                Text("网络模式", style = MaterialTheme.typography.titleMedium)
-                NetworkMode.entries.forEach { mode ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = state.data.settings.networkMode == mode, enabled = !state.busy,
-                            onClick = { model.updateSettings(state.data.settings.copy(networkMode = mode)) },
-                            modifier = Modifier.semantics { contentDescription = "网络模式：${mode.title}" })
-                        Text(mode.title)
-                    }
-                }
-                Text("识别有歧义时，请指定当前 WiFi 类型；更改模式后手动登录。", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        Panel {
-            Text("关于工小助", style = MaterialTheme.typography.titleMedium)
-            Text("版本 ${BuildConfig.VERSION_NAME}")
-            Text("支持 Android 12 及以上 · 北工大校园网助手")
-            Text("本机加密保护账号存储，不代表校园认证过程的网络传输已加密。", style = MaterialTheme.typography.bodySmall)
-        }
     }
 }
 

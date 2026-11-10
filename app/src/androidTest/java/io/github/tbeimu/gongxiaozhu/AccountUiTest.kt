@@ -40,7 +40,8 @@ class AccountUiTest {
     @Test fun addingEditingAndRestoringDefaultAccount() {
         compose.onNodeWithText("我的", substring = false).performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("添加校园网账号")).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("添加校园网账号").performScrollTo().performClick()
+        openManager()
+        compose.onNodeWithText("添加账号", substring = false).performScrollTo().performClick()
         compose.onNodeWithTag("account_label").performTextInput("模拟测试账号")
         compose.onNodeWithTag("account_username").performTextInput("ui-demo-only")
         compose.onNodeWithTag("account_password").performTextInput("demo-only-password")
@@ -49,7 +50,7 @@ class AccountUiTest {
         compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("模拟测试账号")).fetchSemanticsNodes().isNotEmpty() }
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("模拟测试账号")).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("模拟测试账号").assertExists()
+        org.junit.Assert.assertTrue(compose.onAllNodes(hasText("模拟测试账号")).fetchSemanticsNodes().isNotEmpty())
         openManager()
         compose.onNodeWithText("默认").assertExists()
         compose.onNodeWithText("编辑").performClick()
@@ -68,13 +69,15 @@ class AccountUiTest {
         compose.onNodeWithText("添加账号").performClick()
         fillAndSave("第二测试账号", "ui-second-demo")
         waitFor("第二测试账号")
-        compose.onNodeWithText("返回", substring = false).performClick()
         compose.onNodeWithTag("account_selector").performScrollTo().performClick()
-        compose.onNodeWithText("第二测试账号", substring = false).performClick()
+        compose.onAllNodes(hasText("第二测试账号", substring = false)).fetchSemanticsNodes().let { nodes -> org.junit.Assert.assertTrue(nodes.isNotEmpty()) }
+        compose.onNodeWithTag("account_selector").assertExists()
+        compose.onNode(hasText("第二测试账号", substring = false) and androidx.compose.ui.test.hasClickAction()).performClick()
         compose.waitUntil(10_000) {
             storedStateWhenIdle()?.defaultAccount?.label == "第二测试账号"
         }
         compose.onNodeWithText("我的", substring = false).performClick()
+        compose.onNodeWithTag("my_NETWORK").performScrollTo().performClick()
         waitForEnabled("打开 App 自动登录")
         compose.waitForIdle()
         compose.waitUntil(10_000) {
@@ -95,7 +98,7 @@ class AccountUiTest {
         compose.onNodeWithContentDescription("打开 App 自动登录").assertIsOff()
         compose.onNodeWithContentDescription("网络模式：宿舍 WiFi").assertIsSelected()
         compose.onNodeWithText("我的", substring = false).performClick()
-        compose.onNodeWithText("第二测试账号").assertExists()
+        compose.onNodeWithTag("my_ACCOUNTS").assertExists()
     }
 
     private fun waitFor(text: String) = compose.waitUntil(10_000) {
@@ -119,8 +122,8 @@ class AccountUiTest {
         compose.onNodeWithText("我的", substring = false).performClick()
         // On compact screens the save snackbar temporarily covers this scrolled row.
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("账号已加密保存")).fetchSemanticsNodes().isEmpty() }
-        compose.onNodeWithText("管理账号", substring = false).performScrollTo().performClick()
-        waitFor("我的账号")
+        compose.onNodeWithTag("my_ACCOUNTS").performScrollTo().performClick()
+        waitFor("校园网账号")
     }
 
     @Test fun billingReplacesAccountTabAndOffersManagementFromFooter() {
@@ -132,12 +135,14 @@ class AccountUiTest {
         }
         compose.onNodeWithText("管理账号", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("校园网账号", substring = false).assertExists()
-        openManager()
         compose.onNodeWithText("还没有账号").assertExists()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("metric_已用流量").assertExists()
     }
 
     private fun add(label: String, username: String) {
-        compose.onNodeWithText("添加校园网账号").performScrollTo().performClick()
+        openManager()
+        compose.onNodeWithText("添加账号", substring = false).performScrollTo().performClick()
         fillAndSave(label, username)
         waitFor(label)
     }

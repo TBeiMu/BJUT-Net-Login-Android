@@ -72,8 +72,6 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
             Text("校园网资费", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text(state.data.defaultAccount?.let { "校园网账号：${it.label} · ${maskUsername(it.username)}" } ?: "请在“我的”添加校园网账号",
                 style = MaterialTheme.typography.bodySmall)
-            Text(state.data.defaultAccount?.let { "${it.label} · ${maskUsername(it.username)}" } ?: "请先在首页添加并选择账号",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MetricCard("已用流量", metrics["已用流量"], Modifier.weight(1f))
