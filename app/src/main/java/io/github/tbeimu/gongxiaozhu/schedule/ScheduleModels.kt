@@ -30,7 +30,7 @@ data class ScheduleData(val schema: Int = 1, val identity: ScheduleIdentity? = n
 }
 
 enum class ScheduleProblem(val hint: String) {
-    CONNECTION("课表服务无法连接，请确认 WiFi 可上网后手动重试"),
+    CONNECTION("课表服务无法连接，请确认 WiFi 或移动数据可上网后手动重试"),
     LOGIN("学校登录未完成，请在页面检查信息后重新提交"),
     EXPIRED("学校登录态已失效，请重新登录后继续导入"),
     IDENTITY("未能确认学校返回的学号，已停止导入；请记录此提示以便适配"),

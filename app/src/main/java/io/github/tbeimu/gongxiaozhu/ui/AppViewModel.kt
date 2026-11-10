@@ -15,6 +15,7 @@ import io.github.tbeimu.gongxiaozhu.billing.BillingController
 import io.github.tbeimu.gongxiaozhu.billing.BillingUiState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -45,6 +46,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
 
     private val loginController = runtime.controller
     val scheduleController = ScheduleController(viewModelScope, runtime.schedules)
+    private var scheduleMonitoring: Job? = null
 
     private val billingController = BillingController(viewModelScope,
         credentials = { id -> withContext(Dispatchers.IO) { repository.credentialsForLogin(id) } },
@@ -73,7 +75,6 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
     }
 
     private fun billingWifiObserved(observation: WifiObservation) {
-        scheduleController.wifiChanged(observation)
         when (observation) {
             WifiObservation.Suspended -> billingController.wifiObservationPaused()
             is WifiObservation.Current -> billingController.wifiChanged(observation.connection)
@@ -85,8 +86,16 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
         billingWifiObserved(runtime.connections.value)
         billingController.enterForeground()
         scheduleController.enterForeground()
+        if (scheduleMonitoring == null) {
+            scheduleMonitoring = viewModelScope.launch { runtime.scheduleConnections.collect(scheduleController::networkChanged) }
+        }
     }
-    fun leaveForeground() { scheduleController.leaveForeground(); runtime.leaveForeground(); billingController.leaveForeground() }
+    fun leaveForeground() {
+        scheduleController.leaveForeground()
+        scheduleMonitoring?.cancel(); scheduleMonitoring = null
+        scheduleController.networkObservationPaused()
+        runtime.leaveForeground(); billingController.leaveForeground()
+    }
     fun login() { if (!state.value.busy && state.value.editor == null) loginController.login() }
     fun cancelLogin() = loginController.cancel()
     fun billingVisible(visible: Boolean) = billingController.setVisible(visible)

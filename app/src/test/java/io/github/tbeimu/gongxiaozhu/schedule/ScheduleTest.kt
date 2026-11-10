@@ -1,7 +1,6 @@
 package io.github.tbeimu.gongxiaozhu.schedule
 
 import io.github.tbeimu.gongxiaozhu.data.*
-import io.github.tbeimu.gongxiaozhu.network.*
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import java.time.LocalDate
@@ -92,23 +91,34 @@ class ScheduleRepositoryTest {
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ScheduleControllerTest {
-    private class Session : ScheduleSession {
+    private class Session(private val term: ScheduleTerm = demoTerm, private val timeoutAt: String? = null) : ScheduleSession {
         var closed = false; var requests = mutableListOf<Int>(); var gate: CompletableDeferred<Unit>? = null
-        override suspend fun open(): ScheduleGate = ScheduleGate.Login(ScheduleLoginPage("demo-token", "https://cas.bjut.edu.cn/login", "fake page"))
-        override suspend fun submit(token: String, values: Map<String, String>): ScheduleGate = ScheduleGate.Ready(demoIdentity, demoTerm)
+        var submits = 0
+        private suspend fun deadline(step: String) {
+            if (timeoutAt == step) withTimeout(20_000) { awaitCancellation() }
+        }
+        override suspend fun open(): ScheduleGate {
+            deadline("open")
+            return ScheduleGate.Login(ScheduleLoginPage("demo-token", "https://cas.bjut.edu.cn/login", "fake page"))
+        }
+        override suspend fun submit(token: String, values: Map<String, String>): ScheduleGate {
+            submits++; deadline("submit")
+            return ScheduleGate.Ready(demoIdentity, term)
+        }
         override suspend fun week(term: ScheduleTerm, number: Int): ScheduleWeek {
             requests += number
             if (number == 2) gate?.await()
+            if (number == 2) deadline("week")
             return demoWeek(number)
         }
         override suspend fun resource(token: String, url: String): ScheduleResource? = null
         override fun close() { closed = true }
     }
-    private fun wifi(session: Session, key: String = "demo-wifi") = WifiObservation.Current(WifiConnection(key, PortalTransport { "" }, scheduleSession = { session }))
+    private fun connection(session: Session, key: String = "demo-wifi", kind: ScheduleNetworkKind = ScheduleNetworkKind.WIFI) = ScheduleConnection(key, kind) { session }
 
     @Test fun noAutoImportAndUserLoginPrecedesAllWeekRequests() = runTest {
         val controller = ScheduleController(backgroundScope, repository(), StandardTestDispatcher(testScheduler)); runCurrent()
-        val session = Session(); controller.wifiChanged(wifi(session)); controller.enterForeground(); runCurrent()
+        val session = Session(); controller.networkChanged(connection(session)); controller.enterForeground(); runCurrent()
         assertNull(controller.state.value.page); assertTrue(session.requests.isEmpty())
         controller.start(); runCurrent(); assertNotNull(controller.state.value.page); assertTrue(session.requests.isEmpty())
         controller.submit("demo-token", mapOf("username" to "fake", "password" to "fake")); runCurrent()
@@ -118,7 +128,7 @@ class ScheduleControllerTest {
 
     @Test fun backgroundOrNetworkChangeClearsLoginPageAndRejectsStaleSubmission() = runTest {
         val controller = ScheduleController(backgroundScope, repository(), StandardTestDispatcher(testScheduler)); runCurrent()
-        val session = Session(); controller.wifiChanged(wifi(session)); controller.enterForeground()
+        val session = Session(); controller.networkChanged(connection(session)); controller.enterForeground()
         controller.start(); runCurrent(); controller.leaveForeground(); runCurrent()
         controller.submit("demo-token", emptyMap()); runCurrent()
         assertTrue(session.closed); assertNull(controller.state.value.page); assertTrue(session.requests.isEmpty())
@@ -128,13 +138,13 @@ class ScheduleControllerTest {
         val repo = repository()
         val controller = ScheduleController(backgroundScope, repo, StandardTestDispatcher(testScheduler)); runCurrent()
         val first = Session().apply { gate = CompletableDeferred() }
-        controller.wifiChanged(wifi(first)); controller.enterForeground(); controller.start(); runCurrent()
+        controller.networkChanged(connection(first)); controller.enterForeground(); controller.start(); runCurrent()
         controller.submit("demo-token", emptyMap()); runCurrent()
         assertEquals(1, controller.state.value.data.pending!!.weeks.size)
         controller.leaveForeground(); runCurrent()
         assertTrue(first.closed); assertNull(controller.state.value.page); assertNull(controller.state.value.data.complete)
         val next = Session()
-        controller.wifiChanged(wifi(next)); controller.enterForeground(); runCurrent()
+        controller.networkChanged(connection(next)); controller.enterForeground(); runCurrent()
         assertTrue(next.requests.isEmpty())
         controller.start(); runCurrent(); controller.submit("demo-token", emptyMap()); runCurrent()
         assertEquals(listOf(2), next.requests)
@@ -145,9 +155,92 @@ class ScheduleControllerTest {
         val repo = repository()
         repo.begin(demoIdentity, demoTerm); repo.append(demoWeek(1)); repo.append(demoWeek(2)); repo.finish(100)
         val controller = ScheduleController(backgroundScope, repo, StandardTestDispatcher(testScheduler))
-        controller.wifiChanged(WifiObservation.Suspended)
+        controller.networkObservationPaused()
         runCurrent()
         assertNotNull(controller.state.value.data.complete)
         assertFalse(controller.state.value.loading)
+    }
+
+    @Test fun oneLoginAutomaticallyImportsAllTwentyWeeks() = runTest {
+        val controller = ScheduleController(backgroundScope, repository(), StandardTestDispatcher(testScheduler)); runCurrent()
+        val session = Session(demoTerm.copy(weekCount = 20))
+        controller.networkChanged(connection(session)); controller.enterForeground(); controller.start(); runCurrent()
+        controller.submit("demo-token", mapOf("username" to "fake", "password" to "fake")); runCurrent()
+        assertEquals(1, session.submits)
+        assertEquals((1..20).toList(), session.requests)
+        assertEquals(20, controller.state.value.data.complete!!.weeks.size)
+        assertEquals(20, controller.state.value.imported)
+        assertNull(controller.state.value.data.pending)
+        assertNull(controller.state.value.page)
+        assertTrue(session.closed)
+    }
+
+    @Test fun operationDeadlinesCloseSessionRetainDataAndNeverRetryCredentials() = runTest {
+        for (step in listOf("open", "submit", "week")) {
+            val repo = repository()
+            repo.begin(demoIdentity, demoTerm); repo.append(demoWeek(1)); repo.append(demoWeek(2))
+            val previous = repo.finish(100).complete
+            val controller = ScheduleController(backgroundScope, repo, StandardTestDispatcher(testScheduler)); runCurrent()
+            val session = Session(timeoutAt = step)
+            controller.networkChanged(connection(session)); controller.enterForeground(); controller.start(); runCurrent()
+            if (step != "open") { controller.submit("demo-token", emptyMap()); runCurrent() }
+            advanceTimeBy(20_001); runCurrent()
+            val state = controller.state.value
+            assertFalse(state.busy); assertFalse(state.blocked)
+            assertTrue(session.closed); assertNull(state.page)
+            assertEquals(ScheduleProblem.CONNECTION.hint, state.message)
+            assertEquals(previous, state.data.complete)
+            assertEquals(if (step == "week") 1 else 0, state.data.pending?.weeks?.size ?: 0)
+            advanceTimeBy(60_000); runCurrent()
+            assertEquals(if (step == "open") 0 else 1, session.submits)
+            controller.submit("demo-token", emptyMap()); runCurrent()
+            assertEquals(if (step == "open") 0 else 1, session.submits)
+        }
+    }
+
+    @Test fun mobileImportAndSwitchingNetworksRequireExplicitFreshLogin() = runTest {
+        val controller = ScheduleController(backgroundScope, repository(), StandardTestDispatcher(testScheduler)); runCurrent()
+        val mobile = Session().apply { gate = CompletableDeferred() }
+        controller.enterForeground()
+        controller.networkChanged(connection(mobile, "mobile-1", ScheduleNetworkKind.CELLULAR))
+        controller.start(); runCurrent(); controller.submit("demo-token", emptyMap()); runCurrent()
+        assertEquals(ScheduleNetworkKind.CELLULAR, controller.state.value.networkKind)
+        assertEquals(listOf(1, 2), mobile.requests)
+        assertEquals(1, controller.state.value.data.pending!!.weeks.size)
+
+        val wifi = Session()
+        controller.networkChanged(connection(wifi, "wifi-2")); runCurrent()
+        assertTrue(mobile.closed)
+        assertNull(controller.state.value.page)
+        assertTrue(controller.state.value.message.contains("网络已变化"))
+        assertTrue(wifi.requests.isEmpty()); assertEquals(0, wifi.submits)
+        controller.submit("demo-token", emptyMap()); runCurrent()
+        assertEquals(0, wifi.submits)
+        controller.start(); runCurrent(); controller.submit("demo-token", emptyMap()); runCurrent()
+        assertEquals(listOf(2), wifi.requests)
+        assertEquals(1, mobile.submits); assertEquals(1, wifi.submits)
+        assertNotNull(controller.state.value.data.complete)
+    }
+
+    @Test fun noNetworkAndPausedObservationCannotStartAnImport() = runTest {
+        val controller = ScheduleController(backgroundScope, repository(), StandardTestDispatcher(testScheduler)); runCurrent()
+        controller.enterForeground(); controller.networkChanged(null); controller.start(); runCurrent()
+        assertNull(controller.state.value.page)
+        assertTrue(controller.state.value.message.contains("移动数据"))
+        val mobile = Session()
+        controller.networkChanged(connection(mobile, "mobile-1", ScheduleNetworkKind.CELLULAR))
+        controller.leaveForeground(); controller.networkObservationPaused(); controller.enterForeground(); controller.start(); runCurrent()
+        assertNull(controller.state.value.page)
+        assertTrue(mobile.requests.isEmpty()); assertEquals(0, mobile.submits)
+    }
+
+    @Test fun networkSelectionPrefersWorkingWifiAndCanUseMobileWithoutWifi() {
+        val wifi = ScheduleRoute("wifi", ScheduleNetworkKind.WIFI, true)
+        val mobile = ScheduleRoute("mobile", ScheduleNetworkKind.CELLULAR, true)
+        assertEquals("wifi", selectScheduleRoute(listOf(mobile, wifi), "mobile"))
+        assertEquals("mobile", selectScheduleRoute(listOf(mobile, wifi.copy(validated = false)), "wifi"))
+        assertEquals("mobile", selectScheduleRoute(listOf(mobile), null))
+        assertEquals("wifi", selectScheduleRoute(listOf(wifi.copy(validated = false)), "wifi"))
+        assertNull(selectScheduleRoute(emptyList<ScheduleRoute<String>>(), null))
     }
 }

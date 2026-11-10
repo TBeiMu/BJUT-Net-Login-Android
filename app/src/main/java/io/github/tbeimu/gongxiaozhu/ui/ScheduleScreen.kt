@@ -27,7 +27,8 @@ import java.time.format.DateTimeFormatter
 
 @Composable
 internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport: () -> Unit,
-    onPause: () -> Unit, onRetry: () -> Unit, onMine: () -> Unit) {
+    onPause: () -> Unit, onRetry: () -> Unit, onMine: () -> Unit, todayProvider: () -> LocalDate = ::scheduleToday) {
+    val today = rememberScheduleDate(todayProvider)
     val schedule = state.data.complete
     var choice by remember { mutableStateOf(false) }
     var details by remember(schedule) { mutableStateOf<List<ScheduleCourse>?>(null) }
@@ -43,6 +44,7 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
                 Text(if (state.data.pending != null) "继续导入" else if (schedule == null) "导入" else "刷新")
             }
         }
+        Text("课表网络：${state.networkKind?.title ?: "暂不可用"} · 支持 WiFi 或移动数据", style = MaterialTheme.typography.bodySmall)
         if (state.busy) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -66,7 +68,7 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text(if (state.data.pending == null) "把这一学期放进口袋" else "整学期尚未导入完成", style = MaterialTheme.typography.headlineSmall)
-                        Text("连接 WiFi，通过学校页面登录后导入。完成后可离线翻周查看，课表账号独立于校园网账号。")
+                        Text("通过 WiFi 或移动数据登录学校页面，一次导入整个学期。完成后可离线翻周查看，课表账号独立于校园网账号。")
                         Button(onClick = onImport, enabled = !state.busy && !state.loading) {
                             Text(if (state.data.pending == null) "导入研究生课表" else "登录后继续导入")
                         }
@@ -74,7 +76,7 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
                 }
             }
         } else key(schedule.updatedAt) {
-            val current = currentScheduleWeek(schedule)
+            val current = currentScheduleWeek(schedule, today.value)
             val pager = rememberPagerState(initialPage = (current ?: schedule.term.currentWeek).minus(1).coerceIn(0, schedule.weeks.lastIndex)) { schedule.weeks.size }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { if (pager.currentPage > 0) scope.launch { pager.animateScrollToPage(pager.currentPage - 1) } }, enabled = pager.currentPage > 0) { Text("‹") }
@@ -86,12 +88,16 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
                         }) }
                     }
                 }
-                TextButton(onClick = { current?.let { scope.launch { pager.animateScrollToPage(it - 1) } } }, enabled = current != null) { Text("本周") }
+                TextButton(onClick = {
+                    today.value = todayProvider()
+                    currentScheduleWeek(schedule, today.value)?.let { scope.launch { pager.animateScrollToPage(it - 1) } }
+                }, enabled = current != null) { Text("本周") }
                 TextButton(onClick = { scope.launch { pager.animateScrollToPage(pager.currentPage + 1) } }, enabled = pager.currentPage < pager.pageCount - 1) { Text("›") }
             }
             if (current == null) Text("当前日期不在已导入学期内", style = MaterialTheme.typography.bodySmall)
             HorizontalPager(state = pager, modifier = Modifier.weight(1f).testTag("schedule_pager")) { index ->
-                WeekGrid(schedule.weeks[index], schedule.weeks.flatMap { it.courses }.flatMap { it.lessons }.maxOrNull() ?: 1, onCourse = { details = it })
+                WeekGrid(schedule.weeks[index], schedule.weeks.flatMap { it.courses }.flatMap { it.lessons }.maxOrNull() ?: 1,
+                    today = today.value, onCourse = { details = it })
             }
         }
     }
@@ -111,19 +117,19 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
 }
 
 @Composable
-private fun WeekGrid(week: ScheduleWeek, count: Int, onCourse: (List<ScheduleCourse>) -> Unit) {
+private fun WeekGrid(week: ScheduleWeek, count: Int, today: LocalDate, onCourse: (List<ScheduleCourse>) -> Unit) {
     val blocks = remember(week) { courseBlocks(week) }
     val cell = 58.dp * LocalDensity.current.fontScale.coerceIn(1f, 1.5f)
     val days = listOf("一", "二", "三", "四", "五", "六", "日")
-    val today = LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")).toString()
+    val todayText = today.toString()
     val palette = listOf(0xFFBEE5E0, 0xFFE6D2EF, 0xFFFFD5CB, 0xFFCADAFA, 0xFFFFE4B7, 0xFFD8E9C3)
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
             Box(Modifier.width(30.dp))
             week.dates.forEachIndexed { day, date -> Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(days[day], fontWeight = if (date == today) FontWeight.Bold else FontWeight.Normal)
+                Text(days[day], fontWeight = if (date == todayText) FontWeight.Bold else FontWeight.Normal)
                 Text(LocalDate.parse(date).format(DateTimeFormatter.ofPattern("M/d")), fontSize = 10.sp,
-                    color = if (date == today) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    color = if (date == todayText) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             } }
         }
         if (week.courses.isEmpty()) Text("本周无课 · 学校已返回空课表", Modifier.padding(bottom = 6.dp), style = MaterialTheme.typography.bodySmall)

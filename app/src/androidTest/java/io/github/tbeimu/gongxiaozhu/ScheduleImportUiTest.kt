@@ -34,9 +34,8 @@ class ScheduleImportUiTest {
     @get:Rule val rules: RuleChain = RuleChain.outerRule(fixture).around(compose)
 
     @Test fun userWebLoginImportsSemesterAndReturnsToNativeTableWithoutSavingPassword() {
-        val runtime = CampusLoginRuntime.get(compose.activity)
         val model = ViewModelProvider(compose.activity).get(AppViewModel::class.java)
-        compose.waitUntil(10_000) { !model.state.value.schedule.loading && runtime.connections.value is WifiObservation.Current }
+        compose.waitUntil(10_000) { !model.state.value.schedule.loading && model.state.value.schedule.networkKind != null }
         var submits = 0; var closed = false
         val fake = object : ScheduleSession {
             override suspend fun open(): ScheduleGate {
@@ -54,8 +53,7 @@ class ScheduleImportUiTest {
             override fun close() { closed = true }
         }
         compose.runOnUiThread {
-            val key = (runtime.connections.value as WifiObservation.Current).connection?.key ?: "fake-wifi"
-            model.scheduleController.wifiChanged(WifiObservation.Current(WifiConnection(key, PortalTransport { "" }, scheduleSession = { fake })))
+            model.scheduleController.networkChanged(ScheduleConnection("fake-mobile-route", ScheduleNetworkKind.CELLULAR) { fake })
         }
         compose.onNodeWithText("导入研究生课表", substring = false).performClick()
         compose.onNodeWithText("学校统一身份认证").assertExists()

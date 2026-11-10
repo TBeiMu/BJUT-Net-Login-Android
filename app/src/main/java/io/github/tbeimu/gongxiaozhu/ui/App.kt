@@ -309,6 +309,7 @@ private fun MyScreen(state: AppUiState, modifier: Modifier, model: AppViewModel,
         Panel {
             Text("研究生课表", style = MaterialTheme.typography.titleMedium)
             Text(identity?.let { "已绑定 ${maskUsername(it.studentId)} · 独立于校园网账号" } ?: "尚未绑定课表账号")
+            Text("课表网络：${state.schedule.networkKind?.title ?: "暂不可用"} · 支持移动数据", style = MaterialTheme.typography.bodySmall)
             Text(state.schedule.message, style = MaterialTheme.typography.bodySmall)
             if (state.schedule.blocked) TextButton(onClick = model.scheduleController::reload, enabled = !state.schedule.busy) { Text("重试读取课表") }
             else Button(onClick = model.scheduleController::start, enabled = !state.schedule.busy && !state.schedule.loading) { Text(if (identity == null) "导入研究生课表" else "登录并刷新课表") }

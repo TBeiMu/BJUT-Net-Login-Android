@@ -2,6 +2,11 @@ package io.github.tbeimu.gongxiaozhu.schedule
 
 import io.github.tbeimu.gongxiaozhu.network.NetworkDns
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.MockResponse
@@ -78,5 +83,44 @@ class HttpScheduleSessionTest {
         assertTrue(session.open() is ScheduleGate.Login)
         assertEquals("XMLHttpRequest", original.first().header("X-Requested-With"))
         assertEquals(0, original.count { it.method == "POST" })
+    }
+
+    @Test fun dnsDeadlineIsAConnectionFailureAndCancelsLookup() = runTest {
+        var cancelled = false
+        session.close()
+        session = HttpScheduleSession(client, NetworkDns {
+            try { delay(21_000); emptyList() } finally { cancelled = true }
+        })
+        val error = runCatching { session.open() }.exceptionOrNull()
+        assertEquals(ScheduleProblem.CONNECTION, (error as? ScheduleException)?.problem)
+        assertTrue(cancelled)
+        assertTrue(original.isEmpty())
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun callerCancellationIsNotConvertedToConnectionFailure() = runTest {
+        session.close()
+        session = HttpScheduleSession(client, NetworkDns { delay(21_000); emptyList() })
+        var reportedFailure = false
+        val request = launch {
+            try { session.open() } catch (_: ScheduleException) { reportedFailure = true }
+        }
+        runCurrent(); request.cancel(); request.join()
+        assertTrue(request.isCancelled)
+        assertFalse(reportedFailure)
+        assertTrue(original.isEmpty())
+    }
+
+    @Test fun loginResourceDeadlineReturnsFailureToPageLoader() {
+        var slow = false
+        session.close()
+        session = HttpScheduleSession(client, NetworkDns {
+            if (slow) delay(21_000)
+            listOf(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+        })
+        val page = runBlocking { loginPage() }
+        slow = true
+        runTest { assertNull(session.resource(page.token, "$CAS_ORIGIN/cas/fake.js")) }
+        assertEquals(2, original.size)
     }
 }

@@ -18,7 +18,10 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.lifecycle.ViewModelProvider
+import io.github.tbeimu.gongxiaozhu.data.AccountState
 import io.github.tbeimu.gongxiaozhu.data.createAccountRepository
+import io.github.tbeimu.gongxiaozhu.ui.AppViewModel
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -69,7 +72,7 @@ class AccountUiTest {
         compose.onNodeWithTag("account_selector").performScrollTo().performClick()
         compose.onNodeWithText("第二测试账号", substring = false).performClick()
         compose.waitUntil(10_000) {
-            createAccountRepository(compose.activity).load().defaultAccount?.label == "第二测试账号"
+            storedStateWhenIdle()?.defaultAccount?.label == "第二测试账号"
         }
         compose.onNodeWithText("我的", substring = false).performClick()
         waitForEnabled("打开 App 自动登录")
@@ -78,7 +81,7 @@ class AccountUiTest {
             compose.onAllNodes(hasText("默认账号已更新，将用于后续登录")).fetchSemanticsNodes().isEmpty()
         }
         compose.onNodeWithContentDescription("打开 App 自动登录").assertIsOn().performScrollTo().performClick()
-        compose.waitUntil(10_000) { !createAccountRepository(compose.activity).load().settings.autoLogin }
+        compose.waitUntil(10_000) { storedStateWhenIdle()?.settings?.autoLogin == false }
         waitForEnabled("网络模式：宿舍 WiFi")
         // The new update card makes this row scroll to the bottom; wait until the
         // preceding save snackbar no longer covers its touch target.
@@ -86,7 +89,7 @@ class AccountUiTest {
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("设置已保存")).fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithContentDescription("网络模式：宿舍 WiFi").performScrollTo().performClick()
         compose.waitUntil(10_000) {
-            createAccountRepository(compose.activity).load().settings.networkMode == io.github.tbeimu.gongxiaozhu.data.NetworkMode.DORM_WIFI
+            storedStateWhenIdle()?.settings?.networkMode == io.github.tbeimu.gongxiaozhu.data.NetworkMode.DORM_WIFI
         }
         compose.activityRule.scenario.recreate()
         compose.onNodeWithContentDescription("打开 App 自动登录").assertIsOff()
@@ -97,6 +100,13 @@ class AccountUiTest {
 
     private fun waitFor(text: String) = compose.waitUntil(10_000) {
         compose.onAllNodes(androidx.compose.ui.test.hasText(text)).fetchSemanticsNodes().isNotEmpty()
+    }
+
+    private fun storedStateWhenIdle(): AccountState? {
+        // A second AtomicFile reader must not remove an in-progress .new file.
+        // Wait for the app's shared repository write to finish before checking persistence.
+        val state = ViewModelProvider(compose.activity).get(AppViewModel::class.java).state.value
+        return if (state.busy || state.loading) null else createAccountRepository(compose.activity).load()
     }
 
     // An encrypted file write can finish before its UI state update. Wait for the controls,

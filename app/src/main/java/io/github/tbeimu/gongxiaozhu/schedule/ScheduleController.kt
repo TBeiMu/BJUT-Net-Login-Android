@@ -1,12 +1,11 @@
 package io.github.tbeimu.gongxiaozhu.schedule
 
-import io.github.tbeimu.gongxiaozhu.network.WifiConnection
-import io.github.tbeimu.gongxiaozhu.network.WifiObservation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,14 +17,15 @@ import java.time.ZoneId
 
 data class ScheduleUiState(val data: ScheduleData = ScheduleData(), val loading: Boolean = true,
     val busy: Boolean = false, val blocked: Boolean = false, val page: ScheduleLoginPage? = null,
-    val message: String = "导入研究生课表，离线也能查看整个学期", val imported: Int = 0, val total: Int = 0)
+    val message: String = "导入研究生课表，离线也能查看整个学期", val imported: Int = 0, val total: Int = 0,
+    val networkKind: ScheduleNetworkKind? = null)
 
 class ScheduleController(private val scope: CoroutineScope, private val repository: ScheduleRepository,
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO) {
     private val mutable = MutableStateFlow(ScheduleUiState())
     val state = mutable.asStateFlow()
     private var foreground = false
-    private var wifi: WifiConnection? = null
+    private var network: ScheduleConnection? = null
     private var observed = false
     private var session: ScheduleSession? = null
     private var job: Job? = null
@@ -35,11 +35,17 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     init { reload() }
     fun enterForeground() { foreground = true }
     fun leaveForeground() { foreground = false; pause() }
-    fun wifiChanged(observation: WifiObservation) {
-        val value = (observation as? WifiObservation.Current)?.connection
-        observed = observation is WifiObservation.Current
-        if (wifi?.key != value?.key || !observed) pause("WiFi 已变化，导入暂停；连接后可重新登录继续")
-        wifi = value
+    fun networkChanged(value: ScheduleConnection?) {
+        observed = true
+        if (network?.identity != value?.identity) pause("网络已变化，导入暂停；连接后可重新登录继续")
+        network = value
+        mutable.value = state.value.copy(networkKind = value?.kind)
+    }
+    fun networkObservationPaused() {
+        observed = false
+        network = null
+        pause()
+        mutable.value = state.value.copy(networkKind = null)
     }
 
     fun reload() {
@@ -47,19 +53,20 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         runTask {
             try { val data = io { repository.load() }; mutable.value = ScheduleUiState(data, loading = false,
                 imported = data.pending?.weeks?.size ?: 0, total = data.pending?.term?.weekCount ?: 0,
+                networkKind = network?.kind,
                 message = if (data.pending != null) "上次导入尚未完成，可重新登录继续" else "课表仅保存于本机") }
-            catch (_: ScheduleException) { mutable.value = ScheduleUiState(loading = false, blocked = true, message = ScheduleProblem.STORAGE.hint) }
+            catch (_: ScheduleException) { mutable.value = ScheduleUiState(loading = false, blocked = true,
+                networkKind = network?.kind, message = ScheduleProblem.STORAGE.hint) }
         }
     }
 
     fun start() {
         if (!foreground || job != null || state.value.blocked) return
-        val selected = wifi?.takeIf { observed } ?: run { message("请先连接可上网的 WiFi，再导入课表"); return }
-        val factory = selected.scheduleSession ?: run { message("当前 WiFi 无法提供课表连接"); return }
+        val selected = network?.takeIf { observed } ?: run { message("请连接可上网的 WiFi 或开启移动数据，再导入课表"); return }
         session?.close()
-        val active = factory().also { session = it }
+        val active = selected.session().also { session = it }
         networkTask = true
-        mutable.value = state.value.copy(page = null, message = "正在打开学校统一身份认证…")
+        mutable.value = state.value.copy(page = null, message = "正在通过${selected.kind.title}打开学校统一身份认证…")
         runTask { handle(active.open(), active) }
     }
 
@@ -127,7 +134,8 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         runTask(replace = true) {
             old?.join()
             val data = io { repository.clear() }
-            mutable.value = ScheduleUiState(data, loading = false, message = "课表绑定及缓存已清除，可以重新导入")
+            mutable.value = ScheduleUiState(data, loading = false, networkKind = network?.kind,
+                message = "课表绑定及缓存已清除，可以重新导入")
         }
     }
     fun unsupportedWebView() { pause(ScheduleProblem.WEBVIEW.hint) }
@@ -139,17 +147,17 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         mutable.value = state.value.copy(busy = true)
         job = scope.launch(start = CoroutineStart.LAZY) {
             try { action() }
+            catch (_: TimeoutCancellationException) {
+                // An operation's deadline can expire while this import task is still active.
+                // Explicit pause/background cancellation must keep its own state and message.
+                currentCoroutineContext().ensureActive()
+                fail(token, ScheduleProblem.CONNECTION)
+            }
             catch (error: CancellationException) { throw error }
             catch (error: ScheduleException) {
-                if (generation == token) {
-                    session?.close(); session = null
-                    networkTask = false
-                    mutable.value = state.value.copy(page = null, message = error.problem.hint,
-                        blocked = error.problem == ScheduleProblem.STORAGE)
-                }
+                fail(token, error.problem)
             } catch (_: Exception) {
-                if (generation == token) { session?.close(); session = null; networkTask = false
-                    mutable.value = state.value.copy(page = null, message = ScheduleProblem.CONNECTION.hint) }
+                fail(token, ScheduleProblem.CONNECTION)
             }
         }.also { owned -> owned.invokeOnCompletion {
             scope.launch {
@@ -162,8 +170,17 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         } }
         job?.start()
     }
+    private fun fail(token: Long, problem: ScheduleProblem) {
+        if (generation != token) return
+        session?.close(); session = null
+        networkTask = false
+        mutable.value = state.value.copy(page = null, message = problem.hint,
+            blocked = problem == ScheduleProblem.STORAGE)
+    }
     private suspend fun <T> io(block: () -> T): T = withContext(ioDispatcher) { block() }
 }
 
-fun currentScheduleWeek(schedule: SemesterSchedule, today: LocalDate = LocalDate.now(ZoneId.of("Asia/Shanghai"))): Int? =
+fun scheduleToday(): LocalDate = LocalDate.now(ZoneId.of("Asia/Shanghai"))
+
+fun currentScheduleWeek(schedule: SemesterSchedule, today: LocalDate = scheduleToday()): Int? =
     schedule.weeks.firstOrNull { today.toString() in it.dates }?.number

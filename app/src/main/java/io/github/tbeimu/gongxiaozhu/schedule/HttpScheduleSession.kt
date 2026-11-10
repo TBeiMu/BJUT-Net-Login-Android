@@ -9,12 +9,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.*
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -54,7 +52,7 @@ private data class ScheduleResponse(val url: HttpUrl, val bytes: ByteArray, val 
     fun text() = bytes.toString(Charsets.UTF_8)
 }
 
-/** Independent native WiFi transport. Neither credentials nor CAS cookies are stored on disk. */
+/** Independent native transport pinned to one physical network; credentials and CAS cookies stay in memory. */
 class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns) : ScheduleSession {
     private val closed = AtomicBoolean(false)
     private val cookies = ScheduleCookies()
@@ -181,7 +179,7 @@ class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns
     }
 
     private class RawResponse(val code: Int, val bytes: ByteArray, val mime: String, val redirect: String?)
-    private suspend fun request(url: HttpUrl, body: RequestBody?, referer: HttpUrl?): RawResponse = withTimeout(20_000) {
+    private suspend fun request(url: HttpUrl, body: RequestBody?, referer: HttpUrl?): RawResponse = withTimeoutOrNull(20_000) {
         val addresses = dns.lookup(url.host)
         if (addresses.isEmpty()) throw ScheduleException(ScheduleProblem.CONNECTION)
         currentCoroutineContext().ensureActive()
@@ -223,7 +221,7 @@ class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns
                 }
             })
         } } finally { if (closed.get()) call.cancel() }
-    }
+    } ?: throw ScheduleException(ScheduleProblem.CONNECTION)
 
     override fun close() {
         closed.set(true)
