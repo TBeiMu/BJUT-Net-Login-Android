@@ -33,6 +33,29 @@ internal fun repository(store: ScheduleMemoryStore = ScheduleMemoryStore(), keys
     ScheduleRepository(store, AesGcmVaultCipher(keys)).also { it.load() }
 
 class ScheduleRepositoryTest {
+    @Test fun cancellingPendingImportPreservesCompleteScheduleIdentityAndKey() {
+        val store = ScheduleMemoryStore(); val keys = ScheduleMemoryKeys(); val repo = repository(store, keys)
+        repo.begin(demoIdentity, demoTerm);repo.append(demoWeek(1));repo.append(demoWeek(2))
+        val complete = repo.finish(100).complete
+        repo.begin(demoIdentity, demoTerm);repo.append(demoWeek(1, true))
+        val key = keys.value
+        val result = repo.discardPending()
+        assertNull(result.pending);assertEquals(complete, result.complete);assertEquals(demoIdentity, result.identity)
+        assertSame(key,keys.value)
+        assertEquals(result,ScheduleRepository(store,AesGcmVaultCipher(keys)).load())
+        repo.begin(demoIdentity,demoTerm)
+        assertTrue(repo.snapshot().pending!!.weeks.isEmpty())
+    }
+    @Test fun cancellationWriteFailureKeepsProgressAndDoesNotSilentlyReplaceData() {
+        val store=ScheduleMemoryStore(); val repo=repository(store)
+        repo.begin(demoIdentity,demoTerm);repo.append(demoWeek(1))
+        val bytes=store.bytes!!.copyOf();store.failWrite=true
+        assertThrows(ScheduleException::class.java) { repo.discardPending() }
+        assertArrayEquals(bytes,store.bytes);assertEquals(1,repo.snapshot().pending!!.weeks.size)
+        store.failWrite=false
+        val cleared=repo.discardPending()
+        assertNull(cleared.complete);assertNull(cleared.pending);assertEquals(demoIdentity,cleared.identity)
+    }
     @Test fun incompleteRefreshRetainsCompleteSemesterAndRestartResumes() {
         val store = ScheduleMemoryStore(); val keys = ScheduleMemoryKeys(); val repo = repository(store, keys)
         repo.begin(demoIdentity, demoTerm); repo.append(demoWeek(1)); repo.append(demoWeek(2))
@@ -232,6 +255,66 @@ class ScheduleControllerTest {
         controller.leaveForeground(); controller.networkObservationPaused(); controller.enterForeground(); controller.start(); runCurrent()
         assertNull(controller.state.value.page)
         assertTrue(mobile.requests.isEmpty()); assertEquals(0, mobile.submits)
+    }
+
+    @Test fun cancelPausedImportDiscardsOnlyProgressAndNextImportStartsFresh() = runTest {
+        val repo=repository()
+        repo.begin(demoIdentity,demoTerm);repo.append(demoWeek(1));repo.append(demoWeek(2))
+        val complete=repo.finish(10).complete
+        val controller=ScheduleController(backgroundScope,repo,StandardTestDispatcher(testScheduler));runCurrent()
+        val first=Session().apply { gate=CompletableDeferred() }
+        controller.networkChanged(connection(first));controller.enterForeground();controller.start();runCurrent()
+        controller.submit("demo-token",emptyMap());runCurrent()
+        controller.leaveForeground();runCurrent()
+        assertTrue(controller.state.value.canCancelImport)
+        controller.cancelImport();controller.cancelImport();runCurrent()
+        assertTrue(first.closed);assertNull(controller.state.value.data.pending)
+        assertEquals(complete,controller.state.value.data.complete)
+        assertEquals(ScheduleNotice.IDLE,controller.state.value.notice)
+        assertEquals(0,controller.state.value.imported);assertEquals(0,controller.state.value.total)
+        val next=Session()
+        controller.networkChanged(connection(next));controller.enterForeground();controller.start();runCurrent()
+        controller.submit("demo-token",emptyMap());runCurrent()
+        assertEquals(listOf(1,2),next.requests)
+    }
+
+    @Test fun cancellationWaitsForOldRequestCleanupAndRejectsItsLateWeek() = runTest {
+        val release=CompletableDeferred<Unit>()
+        var cancelled=false
+        var closed=false
+        val session=object:ScheduleSession {
+            override suspend fun open() = ScheduleGate.Ready(demoIdentity,demoTerm)
+            override suspend fun submit(token:String, values:Map<String,String>) = error("Unused")
+            override suspend fun week(term:ScheduleTerm,number:Int):ScheduleWeek {
+                if(number==2)try { awaitCancellation() } catch (_:CancellationException) {
+                    cancelled=true
+                    withContext(NonCancellable) { release.await() }
+                }
+                return demoWeek(number)
+            }
+            override suspend fun resource(token:String,url:String):ScheduleResource?=null
+            override fun close(){closed=true}
+        }
+        val repo=repository()
+        val controller=ScheduleController(backgroundScope,repo,StandardTestDispatcher(testScheduler));runCurrent()
+        controller.networkChanged(ScheduleConnection("fake",ScheduleNetworkKind.WIFI){session});controller.enterForeground();controller.start();runCurrent()
+        controller.cancelImport();runCurrent()
+        assertTrue(cancelled);assertTrue(closed);assertTrue(controller.state.value.busy)
+        controller.start();runCurrent();assertEquals(1,repo.snapshot().pending!!.weeks.size)
+        release.complete(Unit);runCurrent()
+        assertFalse(controller.state.value.busy);assertNull(repo.snapshot().pending);assertNull(repo.snapshot().complete)
+        assertEquals(ScheduleNotice.IDLE,controller.state.value.notice)
+    }
+
+    @Test fun cancellationAfterLoginPagePauseClearsRetryMessageWithoutUnbinding() = runTest {
+        val controller=ScheduleController(backgroundScope,repository(),StandardTestDispatcher(testScheduler));runCurrent()
+        val session=Session()
+        controller.networkChanged(connection(session));controller.enterForeground();controller.start();runCurrent()
+        controller.pause();runCurrent()
+        assertTrue(controller.state.value.canCancelImport);assertNull(controller.state.value.data.pending)
+        controller.cancelImport();runCurrent()
+        assertEquals(ScheduleNotice.IDLE,controller.state.value.notice);assertFalse(controller.state.value.canCancelImport)
+        assertNull(controller.state.value.page);assertTrue(session.closed)
     }
 
     @Test fun networkSelectionPrefersWorkingWifiAndCanUseMobileWithoutWifi() {

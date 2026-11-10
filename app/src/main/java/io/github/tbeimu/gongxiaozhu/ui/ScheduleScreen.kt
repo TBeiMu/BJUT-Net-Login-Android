@@ -35,12 +35,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tbeimu.gongxiaozhu.schedule.*
+import io.github.tbeimu.gongxiaozhu.network.CampusConnectionNotice
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 @Composable
 internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport: () -> Unit,
-    onPause: () -> Unit, onRetry: () -> Unit, onMine: () -> Unit, todayProvider: () -> LocalDate = ::scheduleToday) {
+    onPause: () -> Unit, onRetry: () -> Unit, onMine: () -> Unit, todayProvider: () -> LocalDate = ::scheduleToday,
+    connectionNotice: CampusConnectionNotice? = null, titleUnobstructed: Boolean = true, onCancelImport: () -> Unit = {}) {
     val today = rememberScheduleDate(todayProvider)
     val schedule = state.data.complete
     var selected by rememberSaveable(schedule?.identity?.studentId, schedule?.term?.key) {
@@ -57,13 +59,13 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
                 modifier = Modifier.testTag("import_schedule").semantics { contentDescription = if (schedule == null) "导入课表" else "刷新课表" }) { LineGlyph(AppGlyph.DOWNLOAD) }
             TextButton(onClick = { showWeeks = !showWeeks }, enabled = schedule != null,
                 modifier = Modifier.weight(1f).testTag("schedule_week_title")) {
-                Text(if (schedule == null) "我的课表" else "第 $weekNumber 周", Modifier.fillMaxWidth(), textAlign = TextAlign.Start,
-                    color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                CampusConnectionTitle(if (schedule == null) "我的课表" else "第 $weekNumber 周", connectionNotice,
+                    titleUnobstructed && details == null)
             }
             IconButton(onClick = { showWeeks = !showWeeks }, enabled = schedule != null,
                 modifier = Modifier.semantics { contentDescription = "选择周次" }) { LineGlyph(AppGlyph.WEEKS) }
         }
-        ScheduleStatus(state, onPause, onImport)
+        ScheduleStatus(state, onPause, onImport, onCancelImport)
         when {
             state.blocked -> ScheduleEmpty("课表存储暂不可用", "可以重试读取，或在课表管理中确认清除缓存。", "重试读取课表", onRetry,
                 modifier = Modifier.weight(1f), secondary = onMine)
@@ -74,7 +76,7 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
                 Box(Modifier.weight(1f).fillMaxHeight()) {
                     AnimatedContent(targetState = weekNumber, modifier = Modifier.fillMaxSize().testTag("schedule_pager"),
                         transitionSpec = {
-                            val sign = if (targetState > initialState) -1 else 1
+                            val sign = if (targetState > initialState) 1 else -1
                             slideInVertically(tween(220)) { it * sign } togetherWith slideOutVertically(tween(220)) { -it * sign }
                         }, label = "切换周次") { number ->
                         WeekGrid(schedule.weeks[(number - 1).coerceIn(schedule.weeks.indices)], count, today.value, onCourse = { details = it },
@@ -97,7 +99,7 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
 }
 
 @Composable
-private fun ScheduleStatus(state: ScheduleUiState, onPause: () -> Unit, onImport: () -> Unit) {
+private fun ScheduleStatus(state: ScheduleUiState, onPause: () -> Unit, onImport: () -> Unit, onCancelImport: () -> Unit) {
     if (state.notice !in setOf(ScheduleNotice.PROGRESS, ScheduleNotice.PAUSED, ScheduleNotice.ERROR) || state.page != null || state.blocked) return
     Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp).testTag("schedule_status"),
         shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
@@ -108,6 +110,7 @@ private fun ScheduleStatus(state: ScheduleUiState, onPause: () -> Unit, onImport
                     Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 TextButton(onClick = if (state.busy) onPause else onImport) { Text(if (state.busy) "暂停" else if (state.data.pending != null) "继续" else "重试") }
             }
+            CancelScheduleImportButton(state, onCancelImport)
         }
     }
 }
@@ -127,10 +130,10 @@ private fun ScheduleEmpty(title: String, subtitle: String, action: String, onCli
     }
 }
 
-/** User preference: a downward finger swipe advances one week. */
+/** An upward finger swipe advances one week; downward goes to the previous week. */
 internal fun weekDragDirection(delta: Float): Int = when {
-    delta > 0 -> 1
-    delta < 0 -> -1
+    delta < 0 -> 1
+    delta > 0 -> -1
     else -> 0
 }
 

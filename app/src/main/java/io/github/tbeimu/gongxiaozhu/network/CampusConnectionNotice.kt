@@ -1,35 +1,68 @@
 package io.github.tbeimu.gongxiaozhu.network
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
-/** Process-local presentation state; never starts authentication or survives process death. */
-class CampusConnectionNotice {
-    private val mutable = MutableStateFlow<String?>(null)
-    val pending = mutable.asStateFlow()
-    private var task: String? = null
-    private var consumed: String? = null
-    private var candidate: String? = null
+enum class CampusTitlePhase { CONNECTING, CONNECTED }
+data class CampusTitleNotice(val taskId: String, val phase: CampusTitlePhase)
+
+/** One authoritative, process-local title state. UI lifecycle never starts authentication. */
+class CampusConnectionNotice(private val scope: CoroutineScope) {
+    private val mutable = MutableStateFlow<CampusTitleNotice?>(null)
+    val state = mutable.asStateFlow()
+    private var login = LoginUiState()
     private var observing = true
+    private var visible = false
+    private var consumed: String? = null
+    private var displayed: String? = null
+    private var expiry: Job? = null
 
-    fun update(state: LoginUiState) {
-        if (state.taskId != task) {
-            task = state.taskId
-            mutable.value = null
-        }
-        candidate = if (!state.running && state.completed && state.wifiConnected &&
-            state.taskId != null && state.taskId != consumed) state.taskId else null
-        mutable.value = candidate.takeIf { observing }
+    fun update(value: LoginUiState) { login = value; publish() }
+    fun suspendObservation() { observing = false; publish() }
+    fun resumeObservation(value: LoginUiState) { observing = true; update(value) }
+
+    fun setVisible(value: Boolean) {
+        visible = value
+        publish()
     }
 
-    fun suspendObservation() { observing = false; mutable.value = null }
-    fun resumeObservation(state: LoginUiState) { observing = true; update(state) }
+    private fun publish() {
+        val id = login.taskId?.takeIf { observing && login.wifiConnected }
+        if (id == null || !login.running && !login.completed) {
+            stopDisplay()
+            mutable.value = null
+            return
+        }
+        if (login.running) {
+            stopDisplay()
+            mutable.value = CampusTitleNotice(id, CampusTitlePhase.CONNECTING)
+            return
+        }
+        if (displayed != id) stopDisplay()
+        if (displayed == id || consumed != id) {
+            mutable.value = CampusTitleNotice(id, CampusTitlePhase.CONNECTED)
+            if (visible && displayed != id) {
+                consumed = id
+                displayed = id
+                expiry = scope.launch {
+                    delay(2000)
+                    if (displayed == id) {
+                        displayed = null
+                        expiry = null
+                        publish()
+                    }
+                }
+            }
+        } else mutable.value = null
+    }
 
-    fun consume(id: String): Boolean {
-        if (mutable.value != id) return false
-        consumed = id
-        candidate = null
-        mutable.value = null
-        return true
+    private fun stopDisplay() {
+        expiry?.cancel()
+        expiry = null
+        displayed = null
     }
 }

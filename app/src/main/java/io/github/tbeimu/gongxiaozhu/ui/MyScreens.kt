@@ -133,6 +133,7 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
                         else Button(onClick = model.scheduleController::start, enabled = !schedule.loading) {
                             Text(if (schedule.data.pending != null) "继续导入" else if (schedule.data.complete != null) "刷新整个学期" else "导入研究生课表")
                         }
+                        CancelScheduleImportButton(schedule, model.scheduleController::cancelImport)
                     }
                     Text("课表账号独立于校园网账号。登录一次自动导入整个学期，完成后可离线查看。", style = MaterialTheme.typography.bodySmall)
                     if (schedule.data.identity != null || schedule.blocked) TextButton(onClick = onResetSchedule, enabled = !schedule.busy) { Text("更换 / 解绑课表账号") }

@@ -24,7 +24,7 @@ class CampusLoginRuntime private constructor(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val accounts = createAccountRepository(context)
     val schedules = io.github.tbeimu.gongxiaozhu.schedule.createScheduleRepository(context)
-    val connectionNotice = CampusConnectionNotice()
+    val connectionNotice = CampusConnectionNotice(scope)
     val scheduleConnections = io.github.tbeimu.gongxiaozhu.schedule.scheduleNetworks(context)
     private val blocked = MutableStateFlow(false)
     val storageBlocked = blocked.asStateFlow()
@@ -61,6 +61,7 @@ class CampusLoginRuntime private constructor(context: Context) {
 
     fun leaveForeground() {
         foreground = false
+        connectionNotice.setVisible(false)
         controller.leaveForeground()
         if (!controller.state.value.running) stopMonitoring()
     }

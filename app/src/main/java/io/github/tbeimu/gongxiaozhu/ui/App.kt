@@ -129,9 +129,10 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                 Tab.SCHEDULE -> Box(Modifier.padding(padding).fillMaxSize()) {
                     ScheduleScreen(state.schedule, Modifier, model.scheduleController::start,
                         { model.scheduleController.pause() }, model.scheduleController::reload,
-                        { open(MyDestination.SCHEDULE, Tab.SCHEDULE) })
-                    CampusConnectedBanner(model.connectionNotice, state.login,
-                        unobstructed = state.schedule.page == null && state.editor == null)
+                        { open(MyDestination.SCHEDULE, Tab.SCHEDULE) }, connectionNotice = model.connectionNotice,
+                        titleUnobstructed = state.schedule.page == null && state.editor == null && !resetSchedule &&
+                            !resetting && deleting == null && state.billing.webPage == null && !state.billing.offerWeb &&
+                            state.billing.confirmation == null, onCancelImport = model.scheduleController::cancelImport)
                 }
                 Tab.BILLING -> if (state.storageBlocked) Column(Modifier.padding(padding).padding(24.dp)) {
                     Text("校园网账号存储暂不可用")

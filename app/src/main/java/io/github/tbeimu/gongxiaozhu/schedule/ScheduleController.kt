@@ -20,7 +20,10 @@ enum class ScheduleNotice { IDLE, PROGRESS, SUCCESS, PAUSED, ERROR }
 data class ScheduleUiState(val data: ScheduleData = ScheduleData(), val loading: Boolean = true,
     val busy: Boolean = false, val blocked: Boolean = false, val page: ScheduleLoginPage? = null,
     val message: String = "导入研究生课表，离线也能查看整个学期", val imported: Int = 0, val total: Int = 0,
-    val networkKind: ScheduleNetworkKind? = null, val notice: ScheduleNotice = ScheduleNotice.IDLE)
+    val networkKind: ScheduleNetworkKind? = null, val notice: ScheduleNotice = ScheduleNotice.IDLE) {
+    val canCancelImport: Boolean get() = !loading && !blocked && !busy &&
+        (data.pending != null || notice == ScheduleNotice.PAUSED || notice == ScheduleNotice.ERROR)
+}
 
 class ScheduleController(private val scope: CoroutineScope, private val repository: ScheduleRepository,
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO) {
@@ -130,6 +133,20 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         networkTask = false
         job?.cancel()
         mutable.value = state.value.copy(page = null, notice = ScheduleNotice.PAUSED, message = text)
+    }
+
+    /** Called after confirmation. Finish old request cleanup before touching its saved progress. */
+    fun cancelImport() {
+        if (state.value.loading || state.value.blocked || (job != null && !networkTask)) return
+        val old = job
+        pause()
+        mutable.value = state.value.copy(page = null, notice = ScheduleNotice.PROGRESS, message = "正在取消本次导入…")
+        runTask(replace = true) {
+            old?.join()
+            val data = io { repository.discardPending() }
+            mutable.value = state.value.copy(data = data, page = null, imported = 0, total = 0,
+                notice = ScheduleNotice.IDLE, message = "已取消本次导入，账号与已保存课表保留")
+        }
     }
 
     /** Only invoked after the UI confirms replacement/unbinding or damaged-cache recovery. */

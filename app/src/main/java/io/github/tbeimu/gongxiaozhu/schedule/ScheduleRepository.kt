@@ -47,6 +47,12 @@ class ScheduleRepository(private val store: VaultStore, private val cipher: Vaul
         return persist(data.copy(complete = SemesterSchedule(p.identity, p.term, p.weeks.sortedBy { it.number }, now), pending = null))
     }
 
+    /** Discard only the unfinished attempt; keep the bound identity, complete semester and key. */
+    @Synchronized fun discardPending(): ScheduleData {
+        val data = requireLoaded()
+        return if (data.pending == null) data else persist(data.copy(pending = null))
+    }
+
     @Synchronized fun clear(): ScheduleData = storage {
         store.clear(); cipher.clearKey()
         exists = false
