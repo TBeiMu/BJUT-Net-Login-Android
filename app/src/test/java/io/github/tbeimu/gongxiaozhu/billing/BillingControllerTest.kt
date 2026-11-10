@@ -33,6 +33,21 @@ class BillingControllerTest {
     private fun wifi(session: BillingSession, key: String = "wifi-demo") = WifiConnection(key, PortalTransport { "" }) { session }
     private fun draft(id: String) = AccountDraft(id, "模拟", "demo-$id", "demo-only-password")
 
+    @Test fun logoutWaitsForCancelledAuthenticationToReleaseRequests() = runTest {
+        val fake = FakeSession()
+        val cleanup = CompletableDeferred<Unit>()
+        var cancelled = false
+        val controller = BillingController(backgroundScope, { draft(it) }, {}, {},
+            beforeOffline = { cancelled = true }, awaitLoginStopped = { cleanup.await() })
+        controller.enterForeground(); controller.setVisible(true); controller.accountChanged("demo-1")
+        controller.wifiChanged(wifi(fake)); runCurrent()
+        controller.requestOffline(demoDevice.sessionId); runCurrent()
+        controller.confirmOffline(); runCurrent()
+        assertTrue(cancelled); assertEquals(0, fake.offlineCalls)
+        cleanup.complete(Unit); runCurrent()
+        assertEquals(1, fake.offlineCalls)
+    }
+
     @Test fun openingPageQueriesOnceAndSettingsOrRepeatedVisibilityDoNotRetry() = runTest {
         val fake = FakeSession()
         val states = mutableListOf<BillingUiState>()

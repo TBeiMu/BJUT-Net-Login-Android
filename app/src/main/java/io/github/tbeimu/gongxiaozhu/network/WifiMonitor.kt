@@ -8,8 +8,6 @@ import android.net.NetworkRequest
 import android.net.LinkProperties
 import android.os.Handler
 import android.os.Looper
-import java.net.Inet4Address
-import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -31,12 +29,6 @@ internal fun isPhysicalWifi(capabilities: NetworkCapabilities?): Boolean =
 internal fun isPhysicalWifi(hasTransport: (Int) -> Boolean): Boolean =
     hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && !hasTransport(NetworkCapabilities.TRANSPORT_VPN)
 
-internal fun ipv4OnlyDns(boundDns: okhttp3.Dns) = object : okhttp3.Dns {
-    override fun lookup(hostname: String) = boundDns.lookup(hostname).filterIsInstance<Inet4Address>().ifEmpty {
-        throw UnknownHostException("WiFi 没有可用的 IPv4 地址")
-    }
-}
-
 /** Observes physical WiFi, including unvalidated captive networks; never requests/connects WiFi. */
 class WifiMonitor(context: Context) {
     private val manager = context.applicationContext.getSystemService(ConnectivityManager::class.java)
@@ -57,15 +49,15 @@ class WifiMonitor(context: Context) {
             if (selected == null || link == null) {
                 trySend(null)
             } else {
-                val fingerprint = "${selected.networkHandle}:${link.linkAddresses}:${link.routes}"
+                val fingerprint = "${selected.networkHandle}:${link.linkAddresses}:${link.routes}:${link.dnsServers}"
                 val client = portalClientBuilder().socketFactory(selected.socketFactory)
                     .dns(object : okhttp3.Dns {
                         override fun lookup(hostname: String) = selected.getAllByName(hostname).toList()
                     }).build()
-                val ipv4Client = client.newBuilder().dns(ipv4OnlyDns(client.dns))
+                val ipv4Client = client.newBuilder()
                     .connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS)
                     .callTimeout(4, TimeUnit.SECONDS).build()
-                trySend(WifiConnection(fingerprint, HttpPortalTransport(client, ipv4Client)) { HttpBillingSession(client) })
+                trySend(WifiConnection(fingerprint, HttpPortalTransport(client, ipv4Client, BoundNetworkDns.onNetwork(selected))) { HttpBillingSession(client) })
             }
         }
         val callback = object : ConnectivityManager.NetworkCallback() {

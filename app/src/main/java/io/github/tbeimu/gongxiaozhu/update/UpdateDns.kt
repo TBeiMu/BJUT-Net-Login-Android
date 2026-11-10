@@ -1,8 +1,4 @@
 package io.github.tbeimu.gongxiaozhu.update
 
-import java.net.InetAddress
-
-/** Resolution must suspend without blocking and release its query when cancelled. */
-fun interface UpdateDns {
-    suspend fun lookup(hostname: String): List<InetAddress>
-}
+/** Shared cancellable resolver contract; each module retains its own network and session. */
+typealias UpdateDns = io.github.tbeimu.gongxiaozhu.network.NetworkDns

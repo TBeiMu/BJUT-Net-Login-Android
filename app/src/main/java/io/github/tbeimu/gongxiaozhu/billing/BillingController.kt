@@ -33,6 +33,7 @@ class BillingController(
     private val publish: (BillingUiState) -> Unit,
     private val storageFailure: () -> Unit,
     private val beforeOffline: () -> Unit,
+    private val awaitLoginStopped: suspend () -> Unit = {},
 ) {
     private var state = BillingUiState()
     private var accountId: String? = null
@@ -222,6 +223,7 @@ class BillingController(
         emit(state.copy(running = true, confirmation = null, message = "正在注销选定设备，请勿重复操作…"))
         job = scope.launch {
             try {
+                awaitLoginStopped()
                 current.offline(confirmation.device)
                 if (token != generation) return@launch
                 offlineConfirmed = true

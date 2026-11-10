@@ -5,6 +5,8 @@ import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 data class LoginResult(val message: String, val mode: NetworkMode? = null, val needsChoice: Boolean = false,
     val completed: Boolean = false)
@@ -47,8 +49,13 @@ class CampusLogin : CampusAuthenticator {
         var publicStatus: Boolean? = null
         var dormStatus: Boolean? = null
         val selected = if (mode == NetworkMode.AUTO) {
-            publicStatus = probe(transport, PortalEndpoint.PUBLIC_STATUS)
-            dormStatus = probe(transport, PortalEndpoint.DORM_STATUS)
+            val statuses = coroutineScope {
+                val public = async { probe(transport, PortalEndpoint.PUBLIC_STATUS) }
+                val dorm = async { probe(transport, PortalEndpoint.DORM_STATUS) }
+                public.await() to dorm.await()
+            }
+            publicStatus = statuses.first
+            dormStatus = statuses.second
             when {
                 publicStatus != null && dormStatus == null -> NetworkMode.PUBLIC_WIFI
                 dormStatus != null && publicStatus == null -> NetworkMode.DORM_WIFI
@@ -71,7 +78,7 @@ class CampusLogin : CampusAuthenticator {
         if (confirmed.dormRecognized && transport.hasIpv4Internet()) return internetConfirmed(confirmed)
 
         // Query lgn again after the first stage if it was previously unreachable.
-        val ipv4Before = if (selected == NetworkMode.DORM_WIFI) ipv4Probe(transport) else null
+        val ipv4Before = if (selected == NetworkMode.DORM_WIFI && gatewayStatus) ipv4Probe(transport) else null
         if (selected == NetworkMode.DORM_WIFI && gatewayStatus && ipv4Before == true) {
             return LoginResult("宿舍 WiFi 两阶段均已认证，无需重复登录", selected, completed = true)
         }

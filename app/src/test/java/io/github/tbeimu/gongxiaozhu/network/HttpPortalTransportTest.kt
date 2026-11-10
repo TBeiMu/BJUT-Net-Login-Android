@@ -19,11 +19,13 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class HttpPortalTransportTest {
     private lateinit var server: MockWebServer
     private lateinit var client: OkHttpClient
     private lateinit var transport: HttpPortalTransport
-    private val originalRequests = mutableListOf<okhttp3.Request>()
+    private val originalRequests = java.util.Collections.synchronizedList(mutableListOf<okhttp3.Request>())
+    private val testDns = NetworkDns { listOf(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))) }
 
     @Before fun setup() {
         server = MockWebServer()
@@ -32,7 +34,7 @@ class HttpPortalTransportTest {
         client = portalClientBuilder().addInterceptor { chain ->
             val original = chain.request()
             originalRequests += original
-            val local = original.url.newBuilder().scheme("http").host(server.hostName).port(server.port).build()
+            val local = original.url.newBuilder().scheme("http").host("127.0.0.1").port(server.port).build()
             chain.proceed(original.newBuilder().url(local).build())
         }.build()
         transport = HttpPortalTransport(client)
@@ -55,9 +57,9 @@ class HttpPortalTransportTest {
 
     @Test fun connectivityCheckUsesFixedHttpsUrlWithoutCredentialsAndRequires204() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(204))
-        assertTrue(HttpPortalTransport(client, client).hasIpv4Internet())
-        val request = originalRequests.single()
-        assertEquals("https://connectivitycheck.platform.hicloud.com/generate_204", request.url.toString())
+        assertTrue(HttpPortalTransport(client, client, testDns).hasIpv4Internet())
+        val request = originalRequests.first()
+        assertTrue(request.url.host in setOf("connectivitycheck.platform.hicloud.com", "connect.rom.miui.com"))
         assertEquals("GET", request.method)
         assertNull(request.url.query)
         assertNull(request.body)
@@ -67,7 +69,7 @@ class HttpPortalTransportTest {
     }
 
     @Test fun connectivityCheckRejectsCaptivePagesRedirectsAndHttpErrors() = runBlocking {
-        val checker = HttpPortalTransport(client, client)
+        val checker = HttpPortalTransport(client, client, testDns)
         server.enqueue(MockResponse().setBody("<html>login required</html>"))
         server.enqueue(MockResponse().setBody("<html>login required</html>"))
         assertFalse(checker.hasIpv4Internet())
@@ -84,8 +86,8 @@ class HttpPortalTransportTest {
     @Test fun failedPrimaryUsesOnlyFixedHttpsBackupOnSameBoundFactoryWithoutCredentials() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "https://example.org/captive"))
         server.enqueue(MockResponse().setResponseCode(204))
-        assertTrue(HttpPortalTransport(client, client).hasIpv4Internet())
-        assertEquals(listOf("connectivitycheck.platform.hicloud.com", "connect.rom.miui.com"), originalRequests.map { it.url.host })
+        assertTrue(HttpPortalTransport(client, client, testDns).hasIpv4Internet())
+        assertEquals(setOf("connectivitycheck.platform.hicloud.com", "connect.rom.miui.com"), originalRequests.map { it.url.host }.toSet())
         originalRequests.forEach { request ->
             assertEquals("https", request.url.scheme)
             assertEquals("GET", request.method)
@@ -100,10 +102,10 @@ class HttpPortalTransportTest {
     @Test fun unreachablePrimaryCanUseBackupButBackupHtmlIsNotConnectivityProof() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(503))
         server.enqueue(MockResponse().setResponseCode(204))
-        assertTrue(HttpPortalTransport(client, client).hasIpv4Internet())
+        assertTrue(HttpPortalTransport(client, client, testDns).hasIpv4Internet())
         server.enqueue(MockResponse().setResponseCode(503))
         server.enqueue(MockResponse().setBody("<html>ordinary web page</html>"))
-        assertFalse(HttpPortalTransport(client, client).hasIpv4Internet())
+        assertFalse(HttpPortalTransport(client, client, testDns).hasIpv4Internet())
         assertEquals(4, server.requestCount)
     }
 
@@ -112,29 +114,39 @@ class HttpPortalTransportTest {
         assertEquals(0, server.requestCount)
     }
 
-    @Test fun connectivityDnsDiscardsIpv6AndNeverFallsBackToSystemDns() {
-        val ipv4 = InetAddress.getByAddress(byteArrayOf(192.toByte(), 0, 2, 1))
+    @Test fun ipv6OnlyDnsCannotCountAsIpv4Connectivity() = runBlocking {
         val ipv6 = InetAddress.getByAddress(ByteArray(16).also { it[15] = 1 })
-        val queriedHosts = mutableListOf<String>()
-        val dns = ipv4OnlyDns(object : okhttp3.Dns {
-            override fun lookup(hostname: String): List<InetAddress> {
-                queriedHosts += hostname
-                return listOf(ipv6, ipv4)
-            }
-        })
-        assertEquals(listOf(ipv4), dns.lookup("test.example"))
-        assertEquals(listOf("test.example"), queriedHosts)
-        try {
-            ipv4OnlyDns(object : okhttp3.Dns {
-                override fun lookup(hostname: String) = listOf(ipv6)
-            }).lookup("test.example")
-            fail("IPv6 alone must not count as IPv4 connectivity")
-        } catch (_: UnknownHostException) { /* expected */ }
+        assertFalse(HttpPortalTransport(client, client, NetworkDns { listOf(ipv6) }).hasIpv4Internet())
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun stalledDnsIsCancelledInsideOverallProbeDeadline() = kotlinx.coroutines.test.runTest {
+        var cancelled = 0
+        val dns = NetworkDns { try { kotlinx.coroutines.awaitCancellation() } finally { cancelled++ } }
+        assertFalse(HttpPortalTransport(client, client, dns).hasIpv4Internet())
+        assertEquals(4000, testScheduler.currentTime)
+        assertEquals(2, cancelled)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun successfulProbeCancelsOtherProbeWaitingInDns() = runBlocking {
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var cancelled = false
+        val dns = NetworkDns { host ->
+            if (host.contains("hicloud")) {
+                started.complete(Unit)
+                try { kotlinx.coroutines.awaitCancellation() } finally { cancelled = true }
+            } else { started.await(); testDns.lookup(host) }
+        }
+        server.enqueue(MockResponse().setResponseCode(204))
+        assertTrue(withTimeout(2000) { HttpPortalTransport(client, client, dns).hasIpv4Internet() })
+        assertTrue(cancelled)
+        assertEquals(1, server.requestCount)
     }
 
     @Test fun cancelledConnectivityCheckCancelsBoundHttpCall() = runBlocking {
         server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
-        val pending = async(Dispatchers.Default) { HttpPortalTransport(client, client).hasIpv4Internet() }
+        val pending = async(Dispatchers.Default) { HttpPortalTransport(client, client, testDns).hasIpv4Internet() }
         assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
         withTimeout(2000) { pending.cancelAndJoin() }
         assertTrue(pending.isCancelled)

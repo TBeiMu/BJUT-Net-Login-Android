@@ -82,19 +82,19 @@ class CampusLoginTest {
     }
 
     @Test fun dormLoginUsesBothStagesAndOneCredentialSnapshot() = runTest {
-        val transport = Script(offline, "unreachable lgn page", online, online, ipv4Offline, ipv4Accepted, ipv4Online)
+        val transport = Script(offline, online, online, ipv4Offline, ipv4Accepted, ipv4Online)
         var reads = 0
         val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { reads++; account }, {})
         assertEquals("宿舍 WiFi 两阶段 IPv4 认证成功", result.message)
         assertEquals(1, reads)
-        assertEquals(listOf(PortalEndpoint.DORM_STATUS, PortalEndpoint.IPV4_STATUS, PortalEndpoint.DORM_LOGIN,
+        assertEquals(listOf(PortalEndpoint.DORM_STATUS, PortalEndpoint.DORM_LOGIN,
             PortalEndpoint.DORM_STATUS, PortalEndpoint.IPV4_STATUS, PortalEndpoint.IPV4_LOGIN,
             PortalEndpoint.IPV4_STATUS), transport.endpoints)
-        val dorm = transport.requests[2].parameters.toMap()
+        val dorm = transport.requests[1].parameters.toMap()
         assertEquals("${account.username}@campus", dorm["user_account"])
         assertEquals(account.password, dorm["user_password"])
-        assertEquals(account.password, transport.requests[5].parameters.toMap()["upass"])
-        assertEquals("1", transport.requests[5].parameters.toMap()["v46s"])
+        assertEquals(account.password, transport.requests[4].parameters.toMap()["upass"])
+        assertEquals("1", transport.requests[4].parameters.toMap()["v46s"])
     }
 
     @Test fun dormGatewayAlreadyOnlineStillNeedsIpv4Authentication() = runTest {
@@ -112,7 +112,7 @@ class CampusLoginTest {
     }
 
     @Test fun dormFirstStageFailureNeverSubmitsSecondStageCredentials() = runTest {
-        val transport = Script(offline, ipv4Offline, offline)
+        val transport = Script(offline, offline)
         assertEquals(PortalProblem.REJECTED.hint, CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {}).message)
         assertFalse(transport.endpoints.contains(PortalEndpoint.IPV4_LOGIN))
     }
@@ -137,7 +137,7 @@ class CampusLoginTest {
     }
 
     @Test fun firstStageCanRestoreInternetWithoutSubmittingSecondStage() = runTest {
-        val transport = Script(offline, ipv4Offline, online, online, connectivity = listOf(false, true))
+        val transport = Script(offline, online, online, connectivity = listOf(false, true))
         val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
         assertTrue(result.completed)
         assertTrue(result.message.contains("已联网"))
@@ -194,7 +194,7 @@ class CampusLoginTest {
 
     @Test fun successfulFirstStageWithStaleOfflineStatusShowsWorkingInternetInsteadOfUnconfirmed() = runTest {
         // Screenshot regression: login accepted, chkstatus still returns 0, but WiFi has internet.
-        val transport = Script(offline, ipv4Offline, online, offline, connectivity = listOf(false, true))
+        val transport = Script(offline, online, offline, connectivity = listOf(false, true))
         val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
         assertInternetOnly(result)
         assertEquals(1, transport.endpoints.count { it == PortalEndpoint.DORM_LOGIN })
@@ -212,7 +212,7 @@ class CampusLoginTest {
 
     @Test fun duplicateFirstStageRejectionIsReconciledWithWorkingWifi() = runTest {
         // Internet becomes reachable after the preflight check, while the portal rejects a duplicate.
-        val transport = Script(offline, ipv4Offline, offline, connectivity = listOf(false, true))
+        val transport = Script(offline, offline, connectivity = listOf(false, true))
         val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
         assertInternetOnly(result)
         assertEquals(1, transport.endpoints.count { it == PortalEndpoint.DORM_LOGIN })
@@ -241,7 +241,7 @@ class CampusLoginTest {
     }
 
     @Test fun unknownFirstStageReplyCanBeConfirmedByInternetWithoutClaimingStageAuthentication() = runTest {
-        val transport = Script(offline, ipv4Offline, "<html>changed login reply</html>", connectivity = listOf(false, true))
+        val transport = Script(offline, "<html>changed login reply</html>", connectivity = listOf(false, true))
         val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
         assertInternetOnly(result)
         assertEquals(1, transport.endpoints.count { it == PortalEndpoint.DORM_LOGIN })
@@ -267,7 +267,7 @@ class CampusLoginTest {
     }
 
     @Test fun staleGatewayAndUnavailableInternetKeepUnconfirmedAndNeverSubmitSecondStage() = runTest {
-        val transport = Script(offline, ipv4Offline, online, offline, connectivity = listOf(false, false))
+        val transport = Script(offline, online, offline, connectivity = listOf(false, false))
         val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
         assertFalse(result.completed)
         assertEquals(PortalProblem.UNCONFIRMED.hint, result.message)
@@ -389,7 +389,7 @@ class CampusLoginTest {
     }
 
     @Test fun unconfirmedDormGatewayMustNotBeReportedAsCompleted() = runTest {
-        val transport = Script(offline, ipv4Offline, online, offline)
+        val transport = Script(offline, online, offline)
         val result = CampusLogin().login(transport, NetworkMode.DORM_WIFI, { account }, {})
         assertEquals(PortalProblem.UNCONFIRMED.hint, result.message)
         assertEquals(NetworkMode.DORM_WIFI, result.mode)

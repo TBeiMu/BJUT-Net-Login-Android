@@ -7,6 +7,14 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.net.Inet4Address
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.FormBody
@@ -65,8 +73,9 @@ internal fun portalClientBuilder() = OkHttpClient.Builder()
     .readTimeout(5, TimeUnit.SECONDS)
     .callTimeout(8, TimeUnit.SECONDS)
 
-/** Async calls are cancelled by foreground/network lifecycle cancellation. No HTTP logging. */
-class HttpPortalTransport(private val calls: Call.Factory, private val ipv4Calls: Call.Factory? = null) : PortalTransport {
+/** Async calls follow the bounded authentication task and WiFi lifetime. No HTTP logging. */
+class HttpPortalTransport(private val calls: Call.Factory, private val ipv4Calls: OkHttpClient? = null,
+    private val ipv4Dns: NetworkDns? = null) : PortalTransport {
     override suspend fun execute(request: PortalRequest): String {
         val builder = Request.Builder().header("User-Agent", "GongXiaoZhu/0.1 Android")
             .header("Cache-Control", "no-store")
@@ -84,68 +93,90 @@ class HttpPortalTransport(private val calls: Call.Factory, private val ipv4Calls
         return executeHttp(builder.build(), calls)
     }
 
-    override suspend fun hasIpv4Internet(): Boolean {
-        val factory = ipv4Calls ?: return false
-        for (url in IPV4_CHECK_URLS) {
-            try {
-                // A valid HTTPS 204 proves external reachability, not which portal stage ran.
-                // Never include account data or follow a redirect/captive portal response.
-                val request = Request.Builder().url(url)
-                    .header("Cache-Control", "no-store").build()
-                executeHttp(request, factory, connectivityCheck = true)
-                return true
-            } catch (_: PortalException) { /* Try the other fixed HTTPS service, using the same WiFi. */ }
-        }
-        return false
+    override suspend fun hasIpv4Internet(): Boolean = coroutineScope {
+        val client = ipv4Calls ?: return@coroutineScope false
+        val dns = ipv4Dns ?: return@coroutineScope false
+        val results = Channel<Boolean>(IPV4_CHECK_URLS.size)
+        val jobs = IPV4_CHECK_URLS.map { url -> launch {
+            val online = withTimeoutOrNull(4_000) {
+                try {
+                    val host = url.toHttpUrl().host
+                    val addresses = dns.lookup(host).filterIsInstance<Inet4Address>()
+                    if (addresses.isEmpty()) return@withTimeoutOrNull false
+                    val resolved = client.newBuilder().dns(object : okhttp3.Dns {
+                        override fun lookup(hostname: String): List<java.net.InetAddress> {
+                            if (hostname != host) throw java.net.UnknownHostException("检测域名发生变化")
+                            return addresses
+                        }
+                    }).build()
+                    executeHttp(Request.Builder().url(url).header("Cache-Control", "no-store").build(),
+                        resolved, connectivityCheck = true)
+                    true
+                } catch (_: PortalException) { false }
+                catch (_: IOException) { false }
+            } ?: false
+            results.send(online)
+        } }
+        try {
+            repeat(jobs.size) { if (results.receive()) return@coroutineScope true }
+            false
+        } finally { jobs.forEach { it.cancel() }; results.close() }
     }
 
     private suspend fun executeHttp(
         request: Request,
         factory: Call.Factory,
         connectivityCheck: Boolean = false,
-    ): String = suspendCancellableCoroutine { continuation ->
-        val call = factory.newCall(request)
-        continuation.invokeOnCancellation { call.cancel() }
-        call.enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                if (continuation.isActive) continuation.resumeWithException(PortalException(PortalProblem.CONNECTION))
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                try {
-                    val text = response.use {
-                        if (it.code in 300..399) throw PortalException(PortalProblem.REDIRECT)
-                        if (connectivityCheck) {
-                            if (it.code != 204) throw PortalException(PortalProblem.UNCONFIRMED)
-                            return@use ""
-                        }
-                        if (!it.isSuccessful) throw PortalException(PortalProblem.CONNECTION)
-                        val body = it.body ?: throw PortalException(PortalProblem.RESPONSE)
-                        val source = body.source()
-                        if (body.contentLength() > MAX_BODY || source.request(MAX_BODY + 1)) {
-                            throw PortalException(PortalProblem.RESPONSE)
-                        }
-                        val bytes = source.readByteArray()
-                        // Old lgn pages may declare GB2312/GBK in HTML instead of headers.
-                        val headerCharset = body.contentType()?.charset()
-                        val meta = Regex("charset\\s*=\\s*[\"']?([a-zA-Z0-9_-]+)", RegexOption.IGNORE_CASE)
-                            .find(bytes.toString(Charsets.ISO_8859_1).take(4096))?.groupValues?.get(1)
-                        val charset = headerCharset ?: meta?.let { name ->
-                            runCatching { Charset.forName(name) }.getOrNull()
-                        } ?: Charsets.UTF_8
-                        bytes.toString(charset)
-                    }
-                    if (continuation.isActive) continuation.resume(text)
-                } catch (error: Exception) {
-                    val safe = when (error) {
-                        is PortalException -> error
-                        is IOException -> PortalException(PortalProblem.CONNECTION)
-                        else -> PortalException(PortalProblem.RESPONSE)
-                    }
-                    if (continuation.isActive) continuation.resumeWithException(safe)
+    ): String {
+        val finished = CompletableDeferred<Unit>()
+        try { return suspendCancellableCoroutine { continuation ->
+            val call = try { factory.newCall(request) } catch (error: Exception) { finished.complete(Unit); throw error }
+            continuation.invokeOnCancellation { call.cancel() }
+            try { call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    finished.complete(Unit)
+                    if (continuation.isActive) continuation.resumeWithException(PortalException(PortalProblem.CONNECTION))
                 }
-            }
-        })
+
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        val text = response.use {
+                            if (it.code in 300..399) throw PortalException(PortalProblem.REDIRECT)
+                            if (connectivityCheck) {
+                                if (it.code != 204) throw PortalException(PortalProblem.UNCONFIRMED)
+                                return@use ""
+                            }
+                            if (!it.isSuccessful) throw PortalException(PortalProblem.CONNECTION)
+                            val body = it.body ?: throw PortalException(PortalProblem.RESPONSE)
+                            val source = body.source()
+                            if (body.contentLength() > MAX_BODY || source.request(MAX_BODY + 1)) {
+                                throw PortalException(PortalProblem.RESPONSE)
+                            }
+                            val bytes = source.readByteArray()
+                            // Old lgn pages may declare GB2312/GBK in HTML instead of headers.
+                            val headerCharset = body.contentType()?.charset()
+                            val meta = Regex("charset\\s*=\\s*[\"']?([a-zA-Z0-9_-]+)", RegexOption.IGNORE_CASE)
+                                .find(bytes.toString(Charsets.ISO_8859_1).take(4096))?.groupValues?.get(1)
+                            val charset = headerCharset ?: meta?.let { name ->
+                                runCatching { Charset.forName(name) }.getOrNull()
+                            } ?: Charsets.UTF_8
+                            bytes.toString(charset)
+                        }
+                        if (continuation.isActive) continuation.resume(text)
+                    } catch (error: Exception) {
+                        val safe = when (error) {
+                            is PortalException -> error
+                            is IOException -> PortalException(PortalProblem.CONNECTION)
+                            else -> PortalException(PortalProblem.RESPONSE)
+                        }
+                        if (continuation.isActive) continuation.resumeWithException(safe)
+                    } finally { finished.complete(Unit) }
+                }
+            }) } catch (error: Exception) { finished.complete(Unit); throw error }
+        } } finally {
+            // Cancellation must close the old request before a retry or device logout can begin.
+            withContext(NonCancellable) { finished.await() }
+        }
     }
 
     private companion object {

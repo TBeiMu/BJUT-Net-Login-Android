@@ -68,7 +68,7 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
         return AccountDraft(saved.id, saved.label, saved.username, saved.password)
     }
 
-    /** A validated snapshot of just the selected account for one foreground login. */
+    /** A validated snapshot of just the selected account for one bounded login task. */
     @Synchronized
     fun credentialsForLogin(selectedDefaultId: String?): AccountDraft? {
         checkPersistedState()

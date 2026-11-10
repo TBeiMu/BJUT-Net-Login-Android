@@ -72,7 +72,7 @@ private enum class Tab(val title: String, val glyph: String) {
 }
 
 @Composable
-fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0) = GongXiaoZhuTheme {
+fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRequest: Int = 0) = GongXiaoZhuTheme {
     val state by model.state.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.HOME) }
     val snackbar = remember { SnackbarHostState() }
@@ -81,6 +81,9 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0) = GongXiaoZ
     var managing by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(openUpdatesRequest) {
         if (openUpdatesRequest > 0) { tab = Tab.SETTINGS; managing = false }
+    }
+    LaunchedEffect(openLoginRequest) {
+        if (openLoginRequest > 0) { tab = Tab.HOME; managing = false }
     }
     BackHandler(enabled = managing) { managing = false }
 
@@ -119,7 +122,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0) = GongXiaoZ
             else -> when (tab) {
                 Tab.HOME -> Home(state, Modifier.padding(padding), onAdd = model::addAccount,
                     onAccounts = { managing = true }, onBilling = { tab = Tab.BILLING },
-                    onSelect = model::setDefault, onLogin = model::login,
+                    onSelect = model::setDefault, onLogin = model::login, onCancelLogin = model::cancelLogin,
                     onMode = { model.updateSettings(state.data.settings.copy(networkMode = it)) })
                 Tab.BILLING -> BillingScreen(state, Modifier.padding(padding), onAccounts = { managing = true },
                     onQuery = model::queryBilling, onOffline = model::requestOffline)
@@ -188,7 +191,7 @@ private fun Panel(content: @Composable () -> Unit) {
 
 @Composable
 private fun Home(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onAccounts: () -> Unit,
-    onBilling: () -> Unit, onSelect: (String) -> Unit, onLogin: () -> Unit, onMode: (NetworkMode) -> Unit) {
+    onBilling: () -> Unit, onSelect: (String) -> Unit, onLogin: () -> Unit, onCancelLogin: () -> Unit, onMode: (NetworkMode) -> Unit) {
     val data = state.data
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Heading("工小助", "让每一次校园连接更简单")
@@ -213,7 +216,13 @@ private fun Home(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onAcc
         Panel {
             Text(if (state.login.wifiConnected) "WiFi 已连接" else "等待连接 WiFi", style = MaterialTheme.typography.titleMedium)
             Text(state.login.message, modifier = Modifier.testTag("login_status"))
-            if (state.login.running) CircularProgressIndicator(Modifier.size(24.dp))
+            if (state.login.running) {
+                CircularProgressIndicator(Modifier.size(24.dp))
+                Text("可切换到后台或锁屏；划掉 App 会停止本次认证。", style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = onCancelLogin, modifier = Modifier.testTag("cancel_login")) { Text("取消认证") }
+            }
+            LoginDiagnostics(state.login)
+            LoginNotificationPermission()
             if (state.login.needsChoice) {
                 Text("选择后会保存网络模式，再点击登录。", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
