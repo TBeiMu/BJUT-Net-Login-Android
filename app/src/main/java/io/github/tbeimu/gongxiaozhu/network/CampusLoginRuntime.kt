@@ -13,13 +13,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** A stopped observer cannot attest that WiFi is disconnected or still available. */
+sealed interface WifiObservation {
+    data object Suspended : WifiObservation
+    data class Current(val connection: WifiConnection?) : WifiObservation
+}
+
 /** Shared account repository and a bounded authentication lifetime, independent of the UI. */
 class CampusLoginRuntime private constructor(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val accounts = createAccountRepository(context)
     private val blocked = MutableStateFlow(false)
     val storageBlocked = blocked.asStateFlow()
-    private val wifi = MutableStateFlow<WifiConnection?>(null)
+    private val wifi = MutableStateFlow<WifiObservation>(WifiObservation.Suspended)
     val connections = wifi.asStateFlow()
     private val monitor = WifiMonitor(context)
     private var monitoring: Job? = null
@@ -37,7 +43,7 @@ class CampusLoginRuntime private constructor(context: Context) {
         if (monitoring == null) {
             controller.awaitWifiSnapshot()
             monitoring = scope.launch {
-                monitor.connections.collect { wifi.value = it; controller.wifiChanged(it) }
+                monitor.connections.collect { wifi.value = WifiObservation.Current(it); controller.wifiChanged(it) }
             }
         }
         controller.enterForeground()
@@ -49,7 +55,11 @@ class CampusLoginRuntime private constructor(context: Context) {
         if (!controller.state.value.running) stopMonitoring()
     }
 
-    private fun stopMonitoring() { monitoring?.cancel(); monitoring = null; wifi.value = null }
+    private fun stopMonitoring() {
+        monitoring?.cancel()
+        monitoring = null
+        wifi.value = WifiObservation.Suspended
+    }
     fun storageReloaded() { blocked.value = false }
 
     companion object {

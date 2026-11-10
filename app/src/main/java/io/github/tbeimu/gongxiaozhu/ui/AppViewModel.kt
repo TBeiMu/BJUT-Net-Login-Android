@@ -10,6 +10,7 @@ import io.github.tbeimu.gongxiaozhu.data.AppSettings
 import io.github.tbeimu.gongxiaozhu.data.VaultUnavailableException
 import io.github.tbeimu.gongxiaozhu.network.CampusLoginRuntime
 import io.github.tbeimu.gongxiaozhu.network.LoginUiState
+import io.github.tbeimu.gongxiaozhu.network.WifiObservation
 import io.github.tbeimu.gongxiaozhu.billing.BillingController
 import io.github.tbeimu.gongxiaozhu.billing.BillingUiState
 import kotlinx.coroutines.CancellationException
@@ -55,9 +56,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
         viewModelScope.launch { runtime.storageBlocked.collect { blocked ->
             if (blocked) mutable.update { it.copy(storageBlocked = true, editor = null, editorError = null) }
         } }
-        viewModelScope.launch { runtime.connections.collect {
-            billingController.wifiChanged(it)
-        } }
+        viewModelScope.launch { runtime.connections.collect(::billingWifiObserved) }
         viewModelScope.launch {
             state.collect {
                 billingController.accountChanged(if (it.loading || it.storageBlocked) null else it.data.defaultAccountId)
@@ -68,7 +67,18 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
         }
     }
 
-    fun enterForeground() { runtime.enterForeground(); billingController.enterForeground() }
+    private fun billingWifiObserved(observation: WifiObservation) {
+        when (observation) {
+            WifiObservation.Suspended -> billingController.wifiObservationPaused()
+            is WifiObservation.Current -> billingController.wifiChanged(observation.connection)
+        }
+    }
+
+    fun enterForeground() {
+        runtime.enterForeground()
+        billingWifiObserved(runtime.connections.value)
+        billingController.enterForeground()
+    }
     fun leaveForeground() { runtime.leaveForeground(); billingController.leaveForeground() }
     fun login() { if (!state.value.busy && state.value.editor == null) loginController.login() }
     fun cancelLogin() = loginController.cancel()

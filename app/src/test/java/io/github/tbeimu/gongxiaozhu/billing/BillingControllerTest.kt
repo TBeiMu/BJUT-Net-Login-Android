@@ -33,6 +33,51 @@ class BillingControllerTest {
     private fun wifi(session: BillingSession, key: String = "wifi-demo") = WifiConnection(key, PortalTransport { "" }) { session }
     private fun draft(id: String) = AccountDraft(id, "模拟", "demo-$id", "demo-only-password")
 
+    @Test fun pausingObservationPreservesDisplayButRequiresFreshWifiAndNewSession() = runTest {
+        val first = FakeSession()
+        val next = FakeSession().apply { onRefresh = { throw BillingException(BillingProblem.CONNECTION) } }
+        var state = BillingUiState()
+        val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(first))
+        controller.enterForeground(); controller.query(); runCurrent()
+        val time = state.loadedAt
+        controller.requestOffline(demoDevice.sessionId); runCurrent()
+        assertNotNull(state.confirmation)
+        controller.leaveForeground(); controller.wifiObservationPaused(); runCurrent()
+        assertTrue(first.closed)
+        assertEquals(demoSnapshot, state.snapshot); assertEquals(time, state.loadedAt)
+        assertNull(state.confirmation)
+        controller.enterForeground(); controller.setVisible(true); controller.query(); runCurrent()
+        assertEquals(1, first.calls); assertFalse(state.running)
+        controller.wifiChanged(wifi(next)); runCurrent()
+        assertEquals(1, next.calls); assertEquals(1, first.calls)
+        assertEquals(demoSnapshot, state.snapshot); assertEquals(time, state.loadedAt)
+    }
+
+    @Test fun actualDisconnectAfterSuspensionClearsPreviousData() = runTest {
+        val first = FakeSession()
+        var state = BillingUiState()
+        val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(first))
+        controller.enterForeground(); controller.query(); runCurrent()
+        controller.leaveForeground(); controller.wifiObservationPaused()
+        controller.enterForeground(); controller.wifiChanged(null); runCurrent()
+        assertNull(state.snapshot); assertNull(state.loadedAt)
+        assertTrue(state.message.contains("未连接 WiFi"))
+    }
+
+    @Test fun changedWifiAfterSuspensionClearsPreviousData() = runTest {
+        val first = FakeSession(); val next = FakeSession()
+        var state = BillingUiState()
+        val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(first))
+        controller.enterForeground(); controller.query(); runCurrent()
+        controller.leaveForeground(); controller.wifiObservationPaused()
+        controller.enterForeground(); controller.wifiChanged(wifi(next, "another-wifi")); runCurrent()
+        assertNull(state.snapshot); assertNull(state.loadedAt)
+        assertEquals(0, next.calls)
+    }
+
     @Test fun logoutWaitsForCancelledAuthenticationToReleaseRequests() = runTest {
         val fake = FakeSession()
         val cleanup = CompletableDeferred<Unit>()
@@ -109,14 +154,15 @@ class BillingControllerTest {
         val gate = CompletableDeferred<Unit>()
         val controller = BillingController(backgroundScope, { draft(it) }, {}, {}, {})
         controller.accountChanged("demo-1")
-        controller.wifiChanged(WifiConnection("wifi-demo", PortalTransport { "" }) {
+        val connection = WifiConnection("wifi-demo", PortalTransport { "" }) {
             FakeSession().also { session ->
                 if (sessions.isEmpty()) session.onRefresh = { withContext(NonCancellable) { gate.await() }; demoSnapshot }
                 sessions += session
             }
-        })
+        }
+        controller.wifiChanged(connection)
         controller.enterForeground(); controller.setVisible(true); runCurrent()
-        controller.leaveForeground(); controller.enterForeground(); runCurrent()
+        controller.leaveForeground(); controller.enterForeground(); controller.wifiChanged(connection); runCurrent()
         assertEquals(1, sessions.size); assertTrue(sessions.first().closed)
         gate.complete(Unit); runCurrent()
         assertEquals(2, sessions.size); assertEquals(1, sessions.last().calls)

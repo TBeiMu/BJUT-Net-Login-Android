@@ -18,6 +18,7 @@ import io.github.tbeimu.gongxiaozhu.network.CampusLoginController
 import io.github.tbeimu.gongxiaozhu.network.CampusLoginRuntime
 import io.github.tbeimu.gongxiaozhu.network.CampusLoginService
 import io.github.tbeimu.gongxiaozhu.network.LoginResult
+import io.github.tbeimu.gongxiaozhu.network.WifiObservation
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.After
 import org.junit.Assert.*
@@ -227,7 +228,8 @@ class CampusLoginServiceTest {
         waitFor {
             var ready = false
             scenario.onActivity { activity -> ready = !androidx.lifecycle.ViewModelProvider(activity)
-                .get(io.github.tbeimu.gongxiaozhu.ui.AppViewModel::class.java).state.value.loading && runtime.connections.value != null }
+                .get(io.github.tbeimu.gongxiaozhu.ui.AppViewModel::class.java).state.value.loading &&
+                (runtime.connections.value as? WifiObservation.Current)?.connection != null }
             ready
         }
         scenario.onActivity { runtime.controller.login() }

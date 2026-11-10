@@ -38,6 +38,7 @@ class BillingController(
     private var state = BillingUiState()
     private var accountId: String? = null
     private var wifi: WifiConnection? = null
+    private var wifiObserved = false
     private var session: BillingSession? = null
     private var foreground = false
     private var visible = false
@@ -57,10 +58,17 @@ class BillingController(
     }
 
     fun wifiChanged(connection: WifiConnection?) {
-        if (wifi?.key == connection?.key) return
+        val changed = wifi?.key != connection?.key
+        wifiObserved = true
         wifi = connection
-        reset(if (connection == null) "未连接 WiFi，请先连接校园 WiFi" else "WiFi 已变化，请重新登录查询", clearData = true)
+        if (changed) reset(if (connection == null) "未连接 WiFi，请先连接校园 WiFi" else "WiFi 已变化，请重新登录查询", clearData = true)
         maybeQuery()
+    }
+
+    fun wifiObservationPaused() {
+        wifiObserved = false
+        // Retain the last display and network identity, but never reuse its query session.
+        reset(state.message, clearData = false)
     }
 
     fun enterForeground() {
@@ -72,6 +80,7 @@ class BillingController(
 
     fun leaveForeground() {
         foreground = false
+        wifiObserved = false
         reset(if (offlineSent) "已停止等待注销结果，请重新查询在线信息核对" else "已停止查询；下次进入资费页会重新查询", clearData = false)
     }
 
@@ -82,11 +91,11 @@ class BillingController(
     }
 
     private fun maybeQuery() {
-        if (visible && foreground && !attempted && accountId != null && wifi != null) query()
+        if (visible && foreground && wifiObserved && !attempted && accountId != null && wifi != null) query()
     }
 
     fun query(code: String? = null) {
-        if (!foreground || job?.isCompleted == false) return
+        if (!foreground || !wifiObserved || job?.isCompleted == false) return
         if (state.webPage != null) return
         attempted = true
         val id = accountId ?: run { emit(state.copy(message = "请先添加并选择校园网账号")); return }
