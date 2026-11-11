@@ -11,6 +11,11 @@ import io.github.tbeimu.gongxiaozhu.network.*
 import io.github.tbeimu.gongxiaozhu.schedule.*
 import io.github.tbeimu.gongxiaozhu.ui.AppViewModel
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -111,28 +116,37 @@ class CampusTitleLifecycleTest {
         compose.onNodeWithTag("schedule_week_title").assertTextContains("第 1 周")
     }
 
-    @Test fun slowTitleStaysThroughOldExpiryAndGoesStraightToFailureBeforeWeek() {
+    @Test fun confirmedSlowFailureShowsWarningAndFailureForOneSecondEachWithoutWeekGap() {
         val runtime = start()
         val original = compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot
-        compose.waitUntil(5000) { compose.onAllNodes(hasText("登录超时")).fetchSemanticsNodes().isNotEmpty() }
-        assertTrue(runtime.controller.state.value.running)
-        assertEquals(original, compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot)
-        screenshot("timeout")
-        val warningStarted = SystemClock.elapsedRealtime()
+        val started = SystemClock.elapsedRealtime()
         compose.waitUntil(5000) {
-            compose.onNodeWithTag("schedule_week_title").assertTextContains("登录超时")
-            SystemClock.elapsedRealtime() - warningStarted >= 3000
+            compose.onNodeWithTag("schedule_week_title").assertTextContains("正在登录校园网")
+            SystemClock.elapsedRealtime() - started >= 2500
         }
         assertTrue(runtime.controller.state.value.running)
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithTag("schedule_week_title").assertTextContains("登录超时")
-        screenshot("timeout-held")
-        compose.runOnUiThread { result.complete(LoginResult("虚构延迟失败")) }
-        compose.waitUntil(5000) { compose.onAllNodes(hasText("校园网登录失败")).fetchSemanticsNodes().isNotEmpty() }
-        assertFalse(runtime.controller.state.value.running)
-        assertEquals(original, compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot)
-        screenshot("failure")
-        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_week_title") and hasText("第 1 周")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("schedule_week_title").assertTextContains("正在登录校园网")
+        val events = java.util.Collections.synchronizedList(mutableListOf<Pair<CampusTitlePhase?, Long>>())
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        try {
+            compose.runOnUiThread {
+                scope.launch { runtime.connectionNotice.state.collect { events.add(it?.phase to SystemClock.elapsedRealtime()) } }
+                result.complete(LoginResult("虚构延迟失败"))
+            }
+            compose.waitUntil(5000) { compose.onAllNodes(hasText("登录超时")).fetchSemanticsNodes().isNotEmpty() }
+            screenshot("timeout-short")
+            compose.waitUntil(5000) { compose.onAllNodes(hasText("校园网登录失败")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("schedule_week_title").assertTextContains("校园网登录失败")
+            assertFalse(runtime.controller.state.value.running)
+            assertEquals(original, compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot)
+            screenshot("failure-short")
+            compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_week_title") and hasText("第 1 周")).fetchSemanticsNodes().isNotEmpty() }
+            val sequence = synchronized(events) { events.dropWhile { it.first != CampusTitlePhase.TIMED_OUT } }
+            assertEquals(listOf(CampusTitlePhase.TIMED_OUT, CampusTitlePhase.FAILED, null), sequence.map { it.first })
+            assertTrue(sequence[1].second - sequence[0].second in 900..1400)
+            assertTrue(sequence[2].second - sequence[1].second in 900..1400)
+        } finally { scope.cancel() }
     }
 
     private fun screenshot(name: String) {

@@ -69,48 +69,51 @@ class CampusConnectionNoticeTest {
         notice.update(success.copy(wifiConnected = false));assertNull(notice.state.value)
     }
 
-    @Test fun slowWarningStartsAt1500msAndStaysUntilTaskCompletesAcrossProgressAndVisibilityChanges() = runTest {
+    @Test fun slowTaskKeepsConnectingWithoutPrematureTimeoutOrFailure() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
         notice.setVisible(true); notice.update(running); runCurrent()
         advanceTimeBy(1000); notice.update(running.copy(message = "虚构进度变化")); runCurrent()
         advanceTimeBy(499); runCurrent()
         assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
         advanceTimeBy(1); runCurrent()
-        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
         advanceTimeBy(1000); notice.setVisible(false); notice.setVisible(true); runCurrent()
         advanceTimeBy(1000); runCurrent()
-        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
         notice.update(running.copy(message = "虚构后续进度")); runCurrent()
         advanceTimeBy(5000); runCurrent()
-        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
     }
 
     @Test fun slowWarningFlowsDirectlyToFailureThenWeekWithNoIntermediateGap() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
         notice.setVisible(true); notice.update(running); runCurrent()
         advanceTimeBy(1500); runCurrent()
-        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
-        // The old two-second warning timer used to restore the week at 3500 ms.
+        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
         advanceTimeBy(3500); runCurrent()
-        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
         notice.update(running.copy(outcome = LoginTaskOutcome.FAILED)); runCurrent()
-        assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         notice.update(running.copy(running = false, outcome = LoginTaskOutcome.FAILED)); runCurrent()
-        advanceTimeBy(1999); runCurrent()
+        advanceTimeBy(999); runCurrent()
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        advanceTimeBy(999); runCurrent()
         assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
         advanceTimeBy(1); runCurrent(); assertNull(notice.state.value)
         notice.update(running.copy(running = false, outcome = LoginTaskOutcome.FAILED))
         notice.setVisible(false); notice.setVisible(true); assertNull(notice.state.value)
     }
 
-    @Test fun lateSuccessCanReplaceSlowWarningAndStillExpiresOnce() = runTest {
+    @Test fun slowTaskSuccessShowsSuccessWithoutTimeoutOrFailureAndStillExpiresOnce() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
         notice.setVisible(true); notice.update(running); runCurrent()
         advanceTimeBy(1800); runCurrent()
-        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
         notice.update(success); runCurrent()
         assertEquals(CampusTitlePhase.CONNECTED, notice.state.value?.phase)
-        advanceTimeBy(1700); runCurrent() // The former warning's expiry cannot clear success.
+        advanceTimeBy(1700); runCurrent()
         assertEquals(CampusTitlePhase.CONNECTED, notice.state.value?.phase)
         advanceTimeBy(300); runCurrent()
         assertNull(notice.state.value)
@@ -123,7 +126,8 @@ class CampusConnectionNoticeTest {
         advanceTimeBy(5000); runCurrent()
         assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
         notice.setVisible(true); runCurrent()
-        advanceTimeBy(2000); runCurrent()
+        advanceTimeBy(999); runCurrent(); assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        advanceTimeBy(1); runCurrent()
         assertNull(notice.state.value)
         notice.setVisible(false); notice.setVisible(true); assertNull(notice.state.value)
     }
@@ -132,10 +136,11 @@ class CampusConnectionNoticeTest {
         val notice = CampusConnectionNotice(backgroundScope)
         notice.setVisible(true); notice.update(running); runCurrent()
         advanceTimeBy(3500); runCurrent()
-        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
         notice.update(running.copy(running = false, outcome = LoginTaskOutcome.TIMED_OUT))
-        runCurrent(); assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
-        advanceTimeBy(1999); runCurrent(); assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        runCurrent(); assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        advanceTimeBy(1000); runCurrent(); assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        advanceTimeBy(999); runCurrent(); assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
         advanceTimeBy(1); runCurrent(); assertNull(notice.state.value)
     }
 
@@ -148,9 +153,36 @@ class CampusConnectionNoticeTest {
         advanceTimeBy(3500); notice.update(failed); runCurrent()
         assertNull(notice.state.value)
         notice.resumeObservation(failed); advanceTimeBy(5000); runCurrent()
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        notice.setVisible(true); runCurrent(); advanceTimeBy(1000); runCurrent()
         assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
-        notice.setVisible(true); runCurrent(); advanceTimeBy(2000); runCurrent()
+        advanceTimeBy(1000); runCurrent()
         assertNull(notice.state.value)
+    }
+
+    @Test fun rotationAndProgressCannotExtendEitherOneSecondResultOrReplayIt() = runTest {
+        val notice = CampusConnectionNotice(backgroundScope)
+        notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(5000); runCurrent()
+        val failed = running.copy(running = false, outcome = LoginTaskOutcome.FAILED)
+        notice.update(failed); runCurrent()
+        advanceTimeBy(400); notice.setVisible(false); notice.setVisible(true); notice.update(failed); runCurrent()
+        advanceTimeBy(599); runCurrent(); assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        advanceTimeBy(1); runCurrent(); assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        advanceTimeBy(400); notice.setVisible(false); notice.setVisible(true); notice.update(failed); runCurrent()
+        advanceTimeBy(600); runCurrent(); assertNull(notice.state.value)
+        notice.update(failed); notice.setVisible(false); notice.setVisible(true); assertNull(notice.state.value)
+    }
+
+    @Test fun newTaskOrCancellationBetweenWarningAndFailureDropsQueuedFailure() = runTest {
+        val notice = CampusConnectionNotice(backgroundScope)
+        notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(5000); runCurrent()
+        notice.update(running.copy(running = false, outcome = LoginTaskOutcome.FAILED)); runCurrent()
+        advanceTimeBy(400)
+        notice.update(running.copy(taskId = "next")); runCurrent()
+        advanceTimeBy(600); runCurrent()
+        assertEquals(CampusTitleNotice("next", CampusTitlePhase.CONNECTING), notice.state.value)
+        notice.update(running.copy(taskId = "next", outcome = LoginTaskOutcome.CANCELLED)); runCurrent()
+        advanceTimeBy(5000); runCurrent(); assertNull(notice.state.value)
     }
 
     @Test fun cancellationAndWifiChangeDiscardWarningAndOldDeadlineCannotAffectNextTask() = runTest {
@@ -163,7 +195,7 @@ class CampusConnectionNoticeTest {
         advanceTimeBy(500); runCurrent()
         assertEquals(CampusTitleNotice("next", CampusTitlePhase.CONNECTING), notice.state.value)
         advanceTimeBy(1000); runCurrent()
-        assertEquals(CampusTitleNotice("next", CampusTitlePhase.TIMED_OUT), notice.state.value)
+        assertEquals(CampusTitleNotice("next", CampusTitlePhase.CONNECTING), notice.state.value)
         notice.update(LoginUiState(wifiConnected = false))
         assertNull(notice.state.value)
         advanceTimeBy(5000); runCurrent(); assertNull(notice.state.value)
