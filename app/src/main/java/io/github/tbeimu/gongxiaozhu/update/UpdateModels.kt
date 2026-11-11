@@ -6,6 +6,7 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
 internal const val RELEASES_URL = "https://github.com/TBeiMu/BJUT_gxz/releases"
+internal const val LEGACY_RELEASES_URL = "https://github.com/TBeiMu/BJUT-Net-Login-Android/releases"
 internal const val UPDATE_URL = "$RELEASES_URL/latest/download/update.json"
 internal val updateJson = Json { ignoreUnknownKeys = true }
 
@@ -68,14 +69,24 @@ class UpdateFailure(message: String) : Exception(message)
 
 /** Every redirect is checked before a socket is opened. No server-provided arbitrary APK URL. */
 internal fun allowedUpdateUrl(url: HttpUrl, initial: HttpUrl): Boolean {
+    val initialPath = trustedReleasePath(initial) ?: return false
     if (url.scheme != "https" || url.port != 443 || url.username.isNotEmpty() ||
         url.password.isNotEmpty() || url.fragment != null) return false
     if (url.host == "release-assets.githubusercontent.com") return true
-    if (url.host != "github.com" || url.query != null) return false
-    if (url == initial) return true
-    return initial.toString() == UPDATE_URL &&
-        Regex("/TBeiMu/BJUT_gxz/releases/download/v[0-9]+\\.[0-9]+\\.[0-9]+/update\\.json")
-            .matches(url.encodedPath)
+    val path = trustedReleasePath(url) ?: return false
+    // Repository rename may change only the repository segment, never an APK's tag or name.
+    if (path == initialPath) return true
+    return initialPath == "/latest/download/update.json" &&
+        Regex("/download/v[0-9]+\\.[0-9]+\\.[0-9]+/update\\.json").matches(path)
+}
+
+private fun trustedReleasePath(url: HttpUrl): String? {
+    if (url.scheme != "https" || url.host != "github.com" || url.port != 443 ||
+        url.username.isNotEmpty() || url.password.isNotEmpty() || url.query != null || url.fragment != null) return null
+    val path = listOf("/TBeiMu/BJUT_gxz/releases", "/TBeiMu/BJUT-Net-Login-Android/releases")
+        .firstOrNull { url.encodedPath.startsWith("$it/") }?.let { url.encodedPath.removePrefix(it) } ?: return null
+    return path.takeIf { it == "/latest/download/update.json" ||
+        Regex("/download/v[0-9]+\\.[0-9]+\\.[0-9]+/(?:update\\.json|gongxiaozhu\\.apk)").matches(it) }
 }
 
 internal fun parseUpdateManifest(text: String): UpdateManifest = try {

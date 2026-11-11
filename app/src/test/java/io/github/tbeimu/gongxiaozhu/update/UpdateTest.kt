@@ -57,6 +57,67 @@ class UpdateTest {
         assertFalse(allowedUpdateUrl(manifest.copy(versionName = "0.4.0").apkUrl.toHttpUrl(), manifest.apkUrl.toHttpUrl()))
     }
 
+    @Test fun renameAllowsOnlyKnownRepositoryNamesAndPreservesPinnedApkTag() {
+        val newMetadata = UPDATE_URL.toHttpUrl()
+        val oldMetadata = "$LEGACY_RELEASES_URL/latest/download/update.json".toHttpUrl()
+        assertTrue(allowedUpdateUrl(newMetadata, oldMetadata))
+        assertTrue(allowedUpdateUrl(oldMetadata, newMetadata))
+        assertTrue(allowedUpdateUrl("$RELEASES_URL/download/v0.4.9/update.json".toHttpUrl(), oldMetadata))
+        val newApk = "$RELEASES_URL/download/v0.4.9/gongxiaozhu.apk".toHttpUrl()
+        val oldApk = "$LEGACY_RELEASES_URL/download/v0.4.9/gongxiaozhu.apk".toHttpUrl()
+        assertTrue(allowedUpdateUrl(newApk, oldApk))
+        assertTrue(allowedUpdateUrl(oldApk, newApk))
+        listOf("$RELEASES_URL/download/v0.4.8/gongxiaozhu.apk", "$RELEASES_URL/download/v0.5.0/gongxiaozhu.apk",
+            "$RELEASES_URL/latest/download/gongxiaozhu.apk", "$RELEASES_URL/download/v0.4.9/update.json",
+            "https://github.com/TBeiMu/BJUT_gxz-other/releases/download/v0.4.9/gongxiaozhu.apk",
+            "https://github.com/another/BJUT_gxz/releases/download/v0.4.9/gongxiaozhu.apk",
+            "$RELEASES_URL/download/v0.4.9/gongxiaozhu.apk?token=fake").forEach {
+            assertFalse(it, allowedUpdateUrl(it.toHttpUrl(), oldApk))
+        }
+        assertFalse(allowedUpdateUrl(newApk, newMetadata))
+        assertFalse(allowedUpdateUrl("https://github.com/other/repo/file".toHttpUrl(), "https://github.com/other/repo/file".toHttpUrl()))
+        assertFalse(allowedUpdateUrl("https://release-assets.githubusercontent.com/fake".toHttpUrl(),
+            "https://github.com/other/repo/file".toHttpUrl()))
+    }
+
+    @Test fun repositoryMetadataRedirectChainIsBoundedAndSendsNoCredentials() = runTest {
+        http(listOf(
+            MockResponse().setResponseCode(301).setHeader("Location", "$LEGACY_RELEASES_URL/latest/download/update.json"),
+            MockResponse().setResponseCode(302).setHeader("Location", "$RELEASES_URL/download/v0.3.0/update.json"),
+            MockResponse().setResponseCode(302).setHeader("Location", "https://release-assets.githubusercontent.com/fictional?token=fake"),
+            MockResponse().setBody(updateJson.encodeToString(manifest))
+        )) { source, server ->
+            assertEquals(manifest, source.check())
+            repeat(4) {
+                val request = server.takeRequest()
+                assertNull(request.getHeader("Cookie")); assertNull(request.getHeader("Authorization"))
+                assertEquals("GET", request.method)
+            }
+        }
+    }
+
+    @Test fun renamedApkRedirectKeepsResumeRangeAndDoesNotAllowAnotherVersion() = runTest {
+        val file = temp.newFile().apply { writeBytes(bytes.take(5).toByteArray()) }
+        http(listOf(
+            MockResponse().setResponseCode(301).setHeader("Location", "$LEGACY_RELEASES_URL/download/v0.3.0/gongxiaozhu.apk"),
+            MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 5-${bytes.size - 1}/${bytes.size}")
+                .setHeader("ETag", "\"one\"").setBody(String(bytes.drop(5).toByteArray()))
+        )) { source, server ->
+            source.download(manifest, file, "\"one\"", {}, {})
+            assertArrayEquals(bytes, file.readBytes())
+            repeat(2) { val request = server.takeRequest(); assertEquals("bytes=5-", request.getHeader("Range")) }
+        }
+        file.writeBytes(bytes.take(5).toByteArray())
+        http(listOf(MockResponse().setResponseCode(301)
+            .setHeader("Location", "$LEGACY_RELEASES_URL/download/v0.4.0/gongxiaozhu.apk"))) { source, server ->
+            assertThrows(UpdateFailure::class.java) { kotlinx.coroutines.runBlocking {
+                source.download(manifest, file, "\"one\"", {}, {})
+            } }
+            assertEquals(1, server.requestCount)
+            assertArrayEquals(bytes.take(5).toByteArray(), file.readBytes())
+        }
+    }
+
     private suspend fun http(responses: List<MockResponse>, test: suspend (HttpUpdateSource, MockWebServer) -> Unit) {
         MockWebServer().use { server ->
             responses.forEach(server::enqueue)
