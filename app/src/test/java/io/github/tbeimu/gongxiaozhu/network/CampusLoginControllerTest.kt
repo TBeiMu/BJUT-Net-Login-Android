@@ -7,6 +7,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -52,6 +53,7 @@ class CampusLoginControllerTest {
         assertEquals(1, calls); assertEquals(id, f.controller.state.value.taskId)
         result.complete(LoginResult("已联网", completed = true)); runCurrent()
         assertTrue(f.controller.state.value.completed); assertEquals(1, f.starts.size)
+        assertEquals(LoginTaskOutcome.SUCCESS, f.controller.state.value.outcome)
     }
 
     @Test fun firstReturnConsumesBackgroundResultWithoutRetryingFailure() = runTest {
@@ -62,6 +64,7 @@ class CampusLoginControllerTest {
         f.controller.serviceStopped(id)
         f.controller.enterForeground(); runCurrent()
         assertEquals("失败", f.controller.state.value.message); assertEquals(1, f.starts.size)
+        assertEquals(LoginTaskOutcome.FAILED, f.controller.state.value.outcome)
         f.controller.login(); assertEquals(2, f.starts.size)
     }
 
@@ -75,6 +78,7 @@ class CampusLoginControllerTest {
         f.ready(wifi); val id = f.start(); runCurrent()
         f.controller.cancel(id); runCurrent(); f.controller.login()
         assertTrue(f.controller.state.value.running); assertEquals(1, f.starts.size)
+        assertEquals(LoginTaskOutcome.CANCELLED, f.controller.state.value.outcome)
         cleanup.complete(Unit); runCurrent(); f.controller.serviceStopped(id)
         assertFalse(f.controller.state.value.running); assertFalse(f.controller.state.value.message.contains("过期"))
         f.controller.login(); assertEquals(2, f.starts.size)
@@ -105,6 +109,7 @@ class CampusLoginControllerTest {
         f.ready(wifi); runCurrent(); advanceTimeBy(LOGIN_TASK_TIMEOUT_MS); runCurrent()
         assertFalse(f.controller.state.value.running)
         assertTrue(f.controller.state.value.message.contains("超时"))
+        assertEquals(LoginTaskOutcome.TIMED_OUT, f.controller.state.value.outcome)
         assertFalse(f.controller.serviceStarted(f.starts.single()))
     }
 
@@ -140,6 +145,7 @@ class CampusLoginControllerTest {
             credentials = { throw VaultUnavailableException() })
         f.ready(wifi); f.start(); runCurrent()
         assertTrue(f.blocked); assertFalse(f.controller.state.value.running)
+        assertEquals(LoginTaskOutcome.FAILED, f.controller.state.value.outcome)
         assertEquals("账号存储不可用，认证已停止", f.controller.state.value.message)
     }
 
@@ -167,5 +173,24 @@ class CampusLoginControllerTest {
         controller.configure(true, true, NetworkMode.AUTO, "demo")
         controller.wifiChanged(wifi); controller.enterForeground(); runCurrent()
         assertFalse(controller.state.value.running); assertFalse(controller.state.value.message.contains("secret"))
+    }
+
+    @Test fun slowTitleDoesNotCancelAuthenticationOrSubmitAgainAndLateSuccessIsShown() = runTest {
+        var calls = 0
+        val result = CompletableDeferred<LoginResult>()
+        val f = Fixture(backgroundScope, CampusAuthenticator { _, _, _, _ -> calls++; result.await() })
+        val notice = CampusConnectionNotice(backgroundScope)
+        notice.setVisible(true)
+        backgroundScope.launch { f.controller.state.collect { notice.update(it) } }
+        f.ready(wifi); f.start(); runCurrent()
+        advanceTimeBy(1500); runCurrent()
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        assertTrue(f.controller.state.value.running); assertEquals(1, calls)
+        advanceTimeBy(2500); runCurrent()
+        assertNull(notice.state.value)
+        assertTrue(f.controller.state.value.running); assertEquals(1, calls)
+        result.complete(LoginResult("虚构延迟成功", completed = true)); runCurrent()
+        assertEquals(CampusTitlePhase.CONNECTED, notice.state.value?.phase)
+        assertTrue(f.controller.state.value.completed); assertEquals(1, calls)
     }
 }

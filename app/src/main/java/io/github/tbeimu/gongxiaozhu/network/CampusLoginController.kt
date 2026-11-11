@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
+enum class LoginTaskOutcome { SUCCESS, FAILED, TIMED_OUT, CANCELLED, NEEDS_CHOICE }
+
 data class LoginUiState(
     val running: Boolean = false,
     val message: String = "连接校园 WiFi 后，可使用默认账号登录",
@@ -24,6 +26,7 @@ data class LoginUiState(
     val completed: Boolean = false,
     val taskId: String? = null,
     val diagnostics: List<LoginDiagnostic> = emptyList(),
+    val outcome: LoginTaskOutcome? = null,
 )
 
 /** Main-thread state machine. The service owns execution, never an Activity or ViewModel. */
@@ -118,18 +121,26 @@ class CampusLoginController(
                         if (!current.cancelled) mutable.value = state.value.copy(message = message)
                     }
                     if (!current.cancelled) mutable.value = state.value.copy(message = result.message,
-                        mode = result.mode, needsChoice = result.needsChoice, completed = result.completed)
+                        mode = result.mode, needsChoice = result.needsChoice, completed = result.completed,
+                        outcome = when {
+                            result.completed -> LoginTaskOutcome.SUCCESS
+                            result.needsChoice -> LoginTaskOutcome.NEEDS_CHOICE
+                            else -> LoginTaskOutcome.FAILED
+                        })
                 }
             } catch (_: TimeoutCancellationException) {
-                mutable.value = state.value.copy(message = "认证超时，已停止；请手动检查联网状态")
+                mutable.value = state.value.copy(message = "认证超时，已停止；请手动检查联网状态",
+                    completed = false, outcome = LoginTaskOutcome.TIMED_OUT)
             } catch (error: CancellationException) {
-                mutable.value = state.value.copy(message = current.cancelMessage, completed = false, needsChoice = false)
+                mutable.value = state.value.copy(message = current.cancelMessage, completed = false, needsChoice = false,
+                    outcome = LoginTaskOutcome.CANCELLED)
                 throw error
             } catch (_: VaultUnavailableException) {
                 storageFailure()
-                mutable.value = state.value.copy(message = "账号存储不可用，认证已停止")
+                mutable.value = state.value.copy(message = "账号存储不可用，认证已停止", outcome = LoginTaskOutcome.FAILED)
             } catch (_: Exception) {
-                mutable.value = state.value.copy(message = "认证未完成，请检查网络和默认账号后手动重试")
+                mutable.value = state.value.copy(message = "认证未完成，请检查网络和默认账号后手动重试",
+                    outcome = LoginTaskOutcome.FAILED)
             }
         }.also { task -> task.invokeOnCompletion {
             scope.launch {
@@ -162,7 +173,8 @@ class CampusLoginController(
         current.cancelled = true
         current.cancelMessage = message
         attempted = true
-        mutable.value = state.value.copy(message = "正在停止认证…")
+        mutable.value = state.value.copy(message = "正在停止认证…", completed = false, needsChoice = false,
+            outcome = LoginTaskOutcome.CANCELLED)
         job?.cancel()
     }
 

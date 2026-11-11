@@ -39,7 +39,7 @@ class AccountUiTest {
 
     @Test fun addingEditingAndRestoringDefaultAccount() {
         compose.onNodeWithText("我的", substring = false).performClick()
-        compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("添加校园网账号")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("my_ACCOUNTS").assertExists()
         openManager()
         compose.onNodeWithText("添加账号", substring = false).performScrollTo().performClick()
         compose.onNodeWithTag("account_label").performTextInput("模拟测试账号")
@@ -63,7 +63,7 @@ class AccountUiTest {
 
     @Test fun selectingAnotherDefaultAndPersistingSettings() {
         compose.onNodeWithText("我的", substring = false).performClick()
-        waitFor("添加校园网账号")
+        compose.onNodeWithTag("my_ACCOUNTS").assertExists()
         add("第一测试账号", "ui-first-demo")
         openManager()
         compose.onNodeWithText("添加账号").performClick()
@@ -128,7 +128,7 @@ class AccountUiTest {
 
     @Test fun billingReplacesAccountTabAndOffersManagementFromFooter() {
         compose.onNodeWithText("我的", substring = false).performClick()
-        waitFor("添加校园网账号")
+        compose.onNodeWithTag("my_ACCOUNTS").assertExists()
         compose.onNodeWithText("资费", substring = false).performClick()
         listOf("已用流量", "可用流量", "消费保护", "账户余额").forEach {
             compose.onNodeWithTag("metric_$it").assertExists()

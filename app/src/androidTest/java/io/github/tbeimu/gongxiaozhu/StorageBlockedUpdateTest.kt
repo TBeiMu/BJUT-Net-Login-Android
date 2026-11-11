@@ -36,7 +36,8 @@ class StorageBlockedUpdateTest {
 
     @Test fun corruptedVaultKeepsUpdaterAccessibleWithoutExposingAccountSettings() {
         compose.onNodeWithText("我的").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText("账号存储暂不可用")).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { androidx.lifecycle.ViewModelProvider(compose.activity)
+            .get(io.github.tbeimu.gongxiaozhu.ui.AppViewModel::class.java).state.value.storageBlocked }
         compose.onNodeWithText("我的").performClick()
         compose.onNodeWithTag("my_UPDATES").performScrollTo().performClick()
         compose.onNodeWithTag("update_card").assertExists()

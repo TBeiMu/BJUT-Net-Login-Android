@@ -64,6 +64,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
 import io.github.tbeimu.gongxiaozhu.BuildConfig
 import io.github.tbeimu.gongxiaozhu.data.AccountDraft
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
@@ -76,6 +78,10 @@ internal enum class Tab(val title: String) {
 @Composable
 fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRequest: Int = 0) = GongXiaoZhuTheme {
     val state by model.state.collectAsStateWithLifecycle()
+    val updateActions = rememberUpdateActions()
+    val updates by updateActions.repository.state.collectAsStateWithLifecycle()
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
+    var localDialogVisible by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Tab.SCHEDULE) }
     val snackbar = remember { SnackbarHostState() }
     val wallpaper = rememberWallpaper()
@@ -87,6 +93,10 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     var resetSchedule by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<AccountSummary?>(null) }
     var resetting by remember { mutableStateOf(false) }
+    val updateUnobstructed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED) && !localDialogVisible &&
+        state.schedule.page == null && state.editor == null && !resetSchedule && !resetting && deleting == null &&
+        state.billing.webPage == null && !state.billing.offerWeb && state.billing.confirmation == null
+    val updateDialogVisible = updateUnobstructed && (updates.prompt != null || updates.mobileConfirmation != null)
     LaunchedEffect(openUpdatesRequest) {
         if (openUpdatesRequest > 0) open(MyDestination.UPDATES, Tab.MY)
     }
@@ -124,7 +134,8 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
             if (selected != null) {
                 MyDetailScreen(selected, state, Modifier.padding(padding), model, wallpaper,
                     onBack = ::back, onResetAccounts = { resetting = true },
-                    onResetSchedule = { resetSchedule = true }, onDelete = { deleting = it })
+                    onResetSchedule = { resetSchedule = true }, onDelete = { deleting = it }, updateActions = updateActions,
+                    onDialogVisibilityChanged = { localDialogVisible = it })
             } else when (tab) {
                 Tab.SCHEDULE -> Box(Modifier.padding(padding).fillMaxSize()) {
                     ScheduleScreen(state.schedule, Modifier, model.scheduleController::start,
@@ -132,7 +143,9 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                         { open(MyDestination.SCHEDULE, Tab.SCHEDULE) }, connectionNotice = model.connectionNotice,
                         titleUnobstructed = state.schedule.page == null && state.editor == null && !resetSchedule &&
                             !resetting && deleting == null && state.billing.webPage == null && !state.billing.offerWeb &&
-                            state.billing.confirmation == null, onCancelImport = model.scheduleController::cancelImport)
+                            state.billing.confirmation == null && !updateDialogVisible,
+                        onCancelImport = model.scheduleController::cancelImport,
+                        onDialogVisibilityChanged = { localDialogVisible = it })
                 }
                 Tab.BILLING -> if (state.storageBlocked) Column(Modifier.padding(padding).padding(24.dp)) {
                     Text("校园网账号存储暂不可用")
@@ -144,6 +157,13 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
             }
         }
     }
+    }
+    UpdateDialogs(updates, updateActions, updateUnobstructed) { id ->
+        if (updateActions.repository.acceptPrompt(id)) {
+            open(MyDestination.UPDATES, Tab.MY)
+            if (updateActions.repository.state.value.phase == io.github.tbeimu.gongxiaozhu.update.UpdatePhase.READY) updateActions.install()
+            else updateActions.download()
+        }
     }
     if (resetSchedule) AlertDialog(onDismissRequest = { resetSchedule = false },
         title = { Text("清除课表绑定和缓存？") },

@@ -6,12 +6,15 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.core.content.FileProvider
 import io.github.tbeimu.gongxiaozhu.ui.GongXiaoZhuTheme
 import io.github.tbeimu.gongxiaozhu.ui.UpdateCard
 import io.github.tbeimu.gongxiaozhu.ui.MobileDownloadDialog
+import io.github.tbeimu.gongxiaozhu.ui.UpdateVersionDialog
+import io.github.tbeimu.gongxiaozhu.update.UpdatePrompt
 import io.github.tbeimu.gongxiaozhu.update.MobileDownloadConfirmation
 import io.github.tbeimu.gongxiaozhu.update.UpdateManifest
 import io.github.tbeimu.gongxiaozhu.update.UpdatePhase
@@ -91,5 +94,36 @@ class UpdateUiTest {
         compose.onNodeWithText("取消").performClick()
         compose.onNodeWithText("使用移动数据下载更新？").assertDoesNotExist()
         compose.runOnIdle { assertEquals(0, confirmed) }
+    }
+
+    @Test fun versionDialogButtonsStayLeftToRightWithLargeTextAndDoNotActUntilClicked() {
+        var cancellations = 0; var ignores = 0; var downloads = 0
+        compose.setContent { GongXiaoZhuTheme {
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides
+                androidx.compose.ui.unit.Density(density.density, 2f)) {
+                UpdateVersionDialog(UpdatePrompt("fake-prompt", manifest.copy(versionName = "0.5.0", versionCode = 20, apkSize = 3_670_016)),
+                    { cancellations++ }, { ignores++ }, { downloads++ })
+            }
+        } }
+        val cancel = compose.onNodeWithTag("cancel_update_prompt").fetchSemanticsNode().boundsInRoot
+        val ignore = compose.onNodeWithTag("ignore_update_prompt").fetchSemanticsNode().boundsInRoot
+        val update = compose.onNodeWithTag("accept_update_prompt").fetchSemanticsNode().boundsInRoot
+        assertTrue(cancel.left < ignore.left && ignore.left < update.left)
+        compose.onNodeWithTag("cancel_update_prompt").assertIsDisplayed()
+        compose.onNodeWithTag("ignore_update_prompt").assertIsDisplayed()
+        compose.onNodeWithTag("accept_update_prompt").assertIsDisplayed()
+        val inst = InstrumentationRegistry.getInstrumentation()
+        val screenshot = inst.uiAutomation.takeScreenshot()
+        if (screenshot != null) {
+            val file = File(inst.targetContext.getExternalFilesDir(null), "update-popup-large.png")
+            file.outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            screenshot.recycle()
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(inst.uiAutomation.executeShellCommand(
+                "cp ${file.absolutePath} /sdcard/Download/gxz-update-popup-large.png")).use { it.readBytes() }
+        }
+        compose.runOnIdle { assertEquals(0, cancellations + ignores + downloads) }
+        compose.onNodeWithTag("ignore_update_prompt").performClick()
+        compose.runOnIdle { assertEquals(1, ignores); assertEquals(0, downloads + cancellations) }
     }
 }

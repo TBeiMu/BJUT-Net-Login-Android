@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         model.enterForeground()
+        UpdateRuntime.get(this).repository.enterForeground()
     }
 
     override fun onStop() {

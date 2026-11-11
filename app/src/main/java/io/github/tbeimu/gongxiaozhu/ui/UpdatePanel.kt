@@ -40,15 +40,18 @@ import io.github.tbeimu.gongxiaozhu.update.UpdatePhase
 import io.github.tbeimu.gongxiaozhu.update.UpdateRuntime
 import io.github.tbeimu.gongxiaozhu.update.UpdateUiState
 import io.github.tbeimu.gongxiaozhu.update.MobileDownloadConfirmation
+import io.github.tbeimu.gongxiaozhu.update.UpdateRepository
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+internal class UpdateActions(val repository: UpdateRepository, val download: () -> Unit,
+    val install: () -> Unit, val releasePage: () -> Unit)
+
 @Composable
-internal fun UpdatePanel() {
+internal fun rememberUpdateActions(): UpdateActions {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val repository = UpdateRuntime.get(context).repository
-    val state by repository.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     fun install() {
@@ -79,28 +82,59 @@ internal fun UpdatePanel() {
     fun requestDownload() {
         repository.requestDownload()?.let(::startDownload)
     }
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { requestDownload() }
-    state.mobileConfirmation?.let { confirmation ->
-        MobileDownloadDialog(confirmation, onConfirm = {
-            repository.confirmMobileDownload(confirmation.id)?.let(::startDownload)
-        }, onDismiss = { repository.dismissMobileDownload(confirmation.id) })
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        if (repository.finishNotificationPermission()) requestDownload()
     }
-    UpdateCard(state, repository::check, onDownload = {
+    return UpdateActions(repository, download = {
         val preferences = context.getSharedPreferences("update_ui", android.content.Context.MODE_PRIVATE)
         if (Build.VERSION.SDK_INT >= 33 && !preferences.getBoolean("notification_asked", false) &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            preferences.edit { putBoolean("notification_asked", true) }
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            if (repository.awaitNotificationPermission()) {
+                preferences.edit { putBoolean("notification_asked", true) }
+                try { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                catch (_: Exception) {
+                    repository.finishNotificationPermission()
+                    repository.installationMessage("无法打开通知权限窗口，请重新点击下载")
+                }
+            }
         } else requestDownload()
-    }, onCancel = repository::cancel, onInstall = {
+    }, install = {
         if (context.packageManager.canRequestPackageInstalls()) install()
         else try {
             installPermission.launch(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${context.packageName}".toUri()))
         } catch (_: Exception) { repository.installationMessage("无法打开安装权限设置，请在系统设置中允许工小助安装未知应用") }
-    }, onReleasePage = {
+    }, releasePage = {
         try { context.startActivity(Intent(Intent.ACTION_VIEW, RELEASES_URL.toUri())) }
         catch (_: Exception) { repository.installationMessage("没有可打开发布页的浏览器") }
     })
+}
+
+@Composable
+internal fun UpdatePanel(actions: UpdateActions) {
+    val state by actions.repository.state.collectAsStateWithLifecycle()
+    UpdateCard(state, { actions.repository.checkForPrompt() }, actions.download,
+        actions.repository::cancel, actions.install, actions.releasePage)
+}
+
+@Composable
+internal fun UpdateDialogs(state: UpdateUiState, actions: UpdateActions, unobstructed: Boolean,
+    onAccept: (String) -> Unit) {
+    if (!unobstructed) return
+    val repository = actions.repository
+    state.mobileConfirmation?.let { confirmation ->
+        val context = LocalContext.current
+        MobileDownloadDialog(confirmation, onConfirm = {
+            repository.confirmMobileDownload(confirmation.id)?.let { permit ->
+                try { ContextCompat.startForegroundService(context, Intent(context, UpdateDownloadService::class.java)
+                    .putExtra(UpdateDownloadService.DOWNLOAD_PERMIT, permit)) }
+                catch (_: Exception) { repository.downloadStartFailed(permit) }
+            }
+        }, onDismiss = { repository.dismissMobileDownload(confirmation.id) })
+    }
+    if (state.mobileConfirmation == null) state.prompt?.let { prompt ->
+        UpdateVersionDialog(prompt, { repository.dismissPrompt(prompt.id) },
+            { repository.ignorePrompt(prompt.id) }, { onAccept(prompt.id) })
+    }
 }
 
 @Composable
@@ -142,12 +176,15 @@ internal fun UpdateCard(state: UpdateUiState, onCheck: () -> Unit, onDownload: (
                     state.manifest != null && !state.busy -> Button(onClick = onDownload) {
                         Text(if (state.phase == UpdatePhase.AVAILABLE) "下载更新" else "继续下载")
                     }
-                    state.manifest == null && !state.busy -> Button(onClick = onCheck) { Text("检查更新") }
+                }
+                if (!state.busy) {
+                    if (state.manifest == null) Button(onClick = onCheck, modifier = Modifier.testTag("check_update")) { Text("检查更新") }
+                    else TextButton(onClick = onCheck, modifier = Modifier.testTag("check_update")) { Text("检查更新") }
                 }
                 if ((state.manifest != null || state.phase == UpdatePhase.CHECKING) && state.phase != UpdatePhase.VERIFYING) {
                     OutlinedButton(onClick = onCancel) { Text("取消更新") }
                 }
-                Text("优先使用可上网的 WiFi；使用移动数据下载前会询问。切换网络后需手动继续。安装需系统确认，账号与设置会保留。", style = MaterialTheme.typography.bodySmall)
+                Text("打开 App 自动检查新版，也可手动检查。优先使用可上网的 WiFi；流量下载前会询问。切网后需手动继续，安装需系统确认。", style = MaterialTheme.typography.bodySmall)
             }
             TextButton(onClick = onReleasePage) { Text("打开发布页") }
         }

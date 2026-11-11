@@ -36,6 +36,7 @@ enum class UpdatePhase { IDLE, CHECKING, CURRENT, AVAILABLE, DOWNLOADING, PAUSED
 enum class UpdateNetworkKind(val title: String) { WIFI("WiFi"), CELLULAR("移动数据") }
 
 data class MobileDownloadConfirmation(val id: String, val versionName: String, val apkBytes: Long)
+data class UpdatePrompt(val id: String, val manifest: UpdateManifest, val error: String? = null)
 
 internal data class UpdateRoute<T>(val id: T, val kind: UpdateNetworkKind, val validated: Boolean)
 
@@ -55,6 +56,7 @@ data class UpdateUiState(
     val networkKind: UpdateNetworkKind? = null,
     val mobileConfirmation: MobileDownloadConfirmation? = null,
     val downloadStarting: Boolean = false,
+    val prompt: UpdatePrompt? = null,
 ) {
     val busy: Boolean get() = downloadStarting || mobileConfirmation != null ||
         phase in setOf(UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING, UpdatePhase.VERIFYING)

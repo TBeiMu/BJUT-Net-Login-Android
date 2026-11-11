@@ -99,14 +99,34 @@ class CampusTitleLifecycleTest {
         compose.onNodeWithTag("schedule_week_title").assertTextContains("第 1 周")
     }
 
-    @Test fun failedAuthenticationRestoresWeekWithoutSuccess() {
+    @Test fun failedAuthenticationShowsFailureThenRestoresWeekWithoutSuccess() {
         val runtime = start()
         compose.onNodeWithTag("schedule_week_title").assertTextContains("正在登录校园网")
         compose.runOnUiThread { result.complete(LoginResult("虚构认证失败")) }
         compose.waitUntil(5000) { !runtime.controller.state.value.running }
         compose.onNodeWithText("校园网已连接").assertDoesNotExist()
+        compose.onNodeWithTag("schedule_week_title").assertTextContains("校园网登录失败")
+        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_week_title") and hasText("第 1 周")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("schedule_week_title").assertTextContains("第 1 周")
     }
+
+    @Test fun slowTitleKeepsTaskRunningAndLateFailureStillAppears() {
+        val runtime = start()
+        val original = compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot
+        compose.waitUntil(5000) { compose.onAllNodes(hasText("登录超时")).fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(runtime.controller.state.value.running)
+        assertEquals(original, compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot)
+        screenshot("timeout")
+        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_week_title") and hasText("第 1 周")).fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(runtime.controller.state.value.running)
+        compose.runOnUiThread { result.complete(LoginResult("虚构延迟失败")) }
+        compose.waitUntil(5000) { compose.onAllNodes(hasText("校园网登录失败")).fetchSemanticsNodes().isNotEmpty() }
+        assertFalse(runtime.controller.state.value.running)
+        assertEquals(original, compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot)
+        screenshot("failure")
+        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_week_title") and hasText("第 1 周")).fetchSemanticsNodes().isNotEmpty() }
+    }
+
     private fun screenshot(name: String) {
         val inst = InstrumentationRegistry.getInstrumentation()
         val bitmap = inst.uiAutomation.takeScreenshot() ?: return

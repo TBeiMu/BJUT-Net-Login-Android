@@ -27,6 +27,10 @@ class MyNavigationTest {
 
     @Test fun sixDestinationsReturnAndBottomTabsStayAvailable(){
         compose.onNodeWithText("我的",substring=false).performClick()
+        compose.onNodeWithText("校园服务",substring=false).assertDoesNotExist()
+        compose.onNodeWithText("应用",substring=false).assertDoesNotExist()
+        compose.onNodeWithText("壁纸与默认背景").assertDoesNotExist()
+        compose.onNodeWithText("你的北工大校园助手").assertDoesNotExist()
         compose.onNodeWithText("检查更新").assertDoesNotExist()
         compose.onNodeWithContentDescription("打开 App 自动登录").assertDoesNotExist()
         listOf("SCHEDULE","ACCOUNTS","NETWORK","APPEARANCE","UPDATES","ABOUT").forEach { key ->

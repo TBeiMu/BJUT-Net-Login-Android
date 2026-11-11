@@ -86,7 +86,8 @@ internal fun updateNetworks(context: Context) = callbackFlow {
         val kind = routes.first { it.id == selected }.kind
         val key = "${selected.networkHandle}:${link.linkAddresses}:${link.routes}:${link.dnsServers}"
         val client = updateClientBuilder().socketFactory(selected.socketFactory).build()
-        trySend(UpdateNetwork(key, HttpUpdateSource(client, BoundUpdateDns.onNetwork(selected)), kind))
+        trySend(UpdateNetwork(key, HttpUpdateSource(client, BoundUpdateDns.onNetwork(selected)), kind,
+            validated = routes.first { it.id == selected }.validated))
     }
     val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { if (!networks.containsKey(network)) networks[network] = NetworkSnapshot() }
@@ -121,4 +122,4 @@ internal fun updateNetworks(context: Context) = callbackFlow {
         if (listeningDefault) manager.unregisterNetworkCallback(defaultCallback)
         if (listening) manager.unregisterNetworkCallback(callback)
     }
-}.flowOn(Dispatchers.Main.immediate).distinctUntilChangedBy { it?.identity }
+}.flowOn(Dispatchers.Main.immediate).distinctUntilChangedBy { it?.let { network -> network.identity to network.validated } }

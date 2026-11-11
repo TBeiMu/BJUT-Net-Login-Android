@@ -6,20 +6,30 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.tbeimu.gongxiaozhu.BuildConfig
+import io.github.tbeimu.gongxiaozhu.R
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 import java.text.DateFormat
@@ -33,78 +43,51 @@ internal enum class MyDestination(val title: String, val glyph: AppGlyph) {
 
 @Composable
 internal fun MyHomeScreen(state: AppUiState, modifier: Modifier, onOpen: (MyDestination) -> Unit) {
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         val identity = state.schedule.data.identity
-        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Box(Modifier.size(60.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(20.dp)),
-                contentAlignment = Alignment.Center) {
-                Text("工", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(identity?.name?.ifBlank { "同学" } ?: "我的校园", style = MaterialTheme.typography.headlineSmall,
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 22.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(identity?.name?.ifBlank { "同学" } ?: "工小助", fontSize = 24.sp,
                     fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(identity?.let { "${maskUsername(it.studentId)} · 已绑定课表" } ?: "尚未绑定课表",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (state.schedule.blocked) "课表暂不可用" else identity?.let { maskUsername(it.studentId) } ?: "未绑定课表",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Box(Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer)) {
+                Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = 1.5f; scaleY = 1.5f }, contentScale = ContentScale.Crop)
             }
         }
-        MyGroup("校园服务", MyDestination.entries.take(3), state, onOpen)
-        MyGroup("应用", MyDestination.entries.drop(3), state, onOpen)
+        MyGroup(MyDestination.entries.take(3), onOpen)
+        MyGroup(MyDestination.entries.drop(3), onOpen)
     }
 }
 
 @Composable
-private fun MyGroup(title: String, entries: List<MyDestination>, state: AppUiState, onOpen: (MyDestination) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-            entries.forEachIndexed { index, entry ->
-                Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { onOpen(entry) }
-                    .testTag("my_${entry.name}").padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Box(Modifier.size(34.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = .08f), RoundedCornerShape(10.dp)),
-                        contentAlignment = Alignment.Center) { LineGlyph(entry.glyph, tint = MaterialTheme.colorScheme.primary) }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(entry.title, style = MaterialTheme.typography.titleSmall)
-                        Text(summary(entry, state), style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    LineGlyph(AppGlyph.CHEVRON, Modifier.size(16.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+private fun MyGroup(entries: List<MyDestination>, onOpen: (MyDestination) -> Unit) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .58f)) {
+        Column {
+            entries.forEach { entry ->
+                Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).clickable { onOpen(entry) }
+                    .testTag("my_${entry.name}").padding(horizontal = 20.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    LineGlyph(entry.glyph, Modifier.size(23.dp), MaterialTheme.colorScheme.onSurface.copy(alpha = .85f))
+                    Text(entry.title, Modifier.weight(1f), fontSize = 16.sp, lineHeight = 22.sp)
+                    LineGlyph(AppGlyph.CHEVRON, Modifier.size(16.dp), MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f))
                 }
-                if (index != entries.lastIndex) HorizontalDivider(Modifier.padding(start = 64.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .35f))
             }
         }
     }
-}
-
-private fun summary(page: MyDestination, state: AppUiState): String = when (page) {
-    MyDestination.SCHEDULE -> when {
-        state.schedule.blocked -> "课表存储暂不可用"
-        state.schedule.busy -> "正在处理课表"
-        state.schedule.data.pending != null -> "导入尚未完成"
-        state.schedule.data.complete != null -> state.schedule.data.complete.term.title
-        else -> "导入整个学期，离线查看"
-    }
-    MyDestination.ACCOUNTS -> if (state.storageBlocked) "账号存储暂不可用" else state.data.defaultAccount?.let { "${it.label} · ${state.data.accounts.size} 个账号" } ?: "添加校园网账号"
-    MyDestination.NETWORK -> when {
-        state.storageBlocked -> "账号存储暂不可用"
-        state.login.running -> "正在认证校园网"
-        state.login.completed -> "校园网已连接"
-        state.login.needsChoice -> "请选择网络模式"
-        state.login.wifiConnected -> "WiFi 已连接"
-        else -> "等待连接 WiFi"
-    }
-    MyDestination.APPEARANCE -> "壁纸与默认背景"
-    MyDestination.UPDATES -> "当前版本 ${BuildConfig.VERSION_NAME}"
-    MyDestination.ABOUT -> "你的北工大校园助手"
 }
 
 @Composable
 internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Modifier, model: AppViewModel,
     wallpaper: WallpaperState, onBack: () -> Unit, onResetAccounts: () -> Unit,
-    onResetSchedule: () -> Unit, onDelete: (AccountSummary) -> Unit) {
+    onResetSchedule: () -> Unit, onDelete: (AccountSummary) -> Unit, updateActions: UpdateActions,
+    onDialogVisibilityChanged: (Boolean) -> Unit = {}) {
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, modifier = Modifier.semantics { contentDescription = "返回" }) { LineGlyph(AppGlyph.BACK) }
@@ -117,6 +100,9 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
             when (page) {
                 MyDestination.SCHEDULE -> {
                     val schedule = state.schedule
+                    var cancelImportConfirmation by remember { mutableStateOf(false) }
+                    LaunchedEffect(schedule.canCancelImport) { if (!schedule.canCancelImport) cancelImportConfirmation = false }
+                    ReportDialogVisibility(schedule.canCancelImport && cancelImportConfirmation, onDialogVisibilityChanged)
                     Panel {
                         Text(schedule.data.identity?.name?.ifBlank { "课表账号" } ?: "研究生课表", style = MaterialTheme.typography.titleMedium)
                         Text(schedule.data.identity?.let { "学号 ${maskUsername(it.studentId)}" } ?: "尚未绑定课表账号")
@@ -133,7 +119,10 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
                         else Button(onClick = model.scheduleController::start, enabled = !schedule.loading) {
                             Text(if (schedule.data.pending != null) "继续导入" else if (schedule.data.complete != null) "刷新整个学期" else "导入研究生课表")
                         }
-                        CancelScheduleImportButton(schedule, model.scheduleController::cancelImport)
+                        CancelScheduleImportButton(schedule, model.scheduleController::cancelImport, cancelImportConfirmation) {
+                            cancelImportConfirmation = it
+                            onDialogVisibilityChanged(it && schedule.canCancelImport)
+                        }
                     }
                     Text("课表账号独立于校园网账号。登录一次自动导入整个学期，完成后可离线查看。", style = MaterialTheme.typography.bodySmall)
                     if (schedule.data.identity != null || schedule.blocked) TextButton(onClick = onResetSchedule, enabled = !schedule.busy) { Text("更换 / 解绑课表账号") }
@@ -173,7 +162,7 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
                         }
                     }
                 }
-                MyDestination.UPDATES -> UpdatePanel()
+                MyDestination.UPDATES -> UpdatePanel(updateActions)
                 MyDestination.ABOUT -> Panel {
                     Text("工小助", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                     Text("版本 ${BuildConfig.VERSION_NAME}")
