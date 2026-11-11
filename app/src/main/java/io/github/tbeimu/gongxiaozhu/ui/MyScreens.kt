@@ -1,6 +1,5 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,7 +14,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -142,17 +140,7 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
                         } }
                     }
                 }
-                MyDestination.APPEARANCE -> {
-                    Card(shape = RoundedCornerShape(20.dp)) {
-                        wallpaper.image?.let { Image(it, "当前壁纸", Modifier.fillMaxWidth().height(190.dp), contentScale = ContentScale.Crop) }
-                            ?: Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) { Text("蓝青渐变 · 默认背景") }
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(onClick = wallpaper.choose, enabled = !wallpaper.busy) { Text("更换壁纸") }
-                            TextButton(onClick = wallpaper.clear, enabled = !wallpaper.busy) { Text("恢复默认背景") }
-                            wallpaper.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        }
-                    }
-                }
+                MyDestination.APPEARANCE -> WallpaperSettingsPanel(wallpaper)
                 MyDestination.UPDATES -> UpdatePanel(updateActions)
                 MyDestination.ABOUT -> Panel {
                     Text("工小助", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)

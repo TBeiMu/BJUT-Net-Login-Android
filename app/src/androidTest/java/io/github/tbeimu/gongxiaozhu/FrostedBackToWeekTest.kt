@@ -48,7 +48,10 @@ class FrostedBackToWeekTest {
         compose.setContent { GongXiaoZhuTheme {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
-                AppBackdrop(WallpaperState().apply { this.image = image }) {
+                AppBackdrop(WallpaperState().apply {
+                    this.image = image
+                    preferences = WallpaperPreferences(mode = WallpaperMode.PHOTO, photoBlurDp = 0, photoName = "wallpaper.jpg")
+                }) {
                     ScheduleScreen(schedule(weekCount), Modifier.fillMaxSize(), {}, {}, {}, {}, todayProvider = { monday })
                 }
             }
