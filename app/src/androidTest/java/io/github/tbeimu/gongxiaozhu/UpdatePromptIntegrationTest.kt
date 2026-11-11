@@ -23,10 +23,15 @@ class UpdatePromptIntegrationTest {
     private val compose = createAndroidComposeRule<MainActivity>()
     private val manifest = UpdateManifest(1, "0.5.0", 20, "io.github.tbeimu.gongxiaozhu", 31,
         3_670_016, "0".repeat(64), "更新内容（测试示例）\n\n1. 改善课表和个人页的使用体验。\n\n2. 打开应用后检查新版，可选择忽略当前版本。\n\n3. 完善校园网连接状态的短暂提示。\n\n4. 下载前确认流量使用，保留账号与设置。\n\n以上为虚构测试说明。")
-    private class Source(private val manifest: UpdateManifest) : UpdateSource {
+    private class Source(var manifest: UpdateManifest) : UpdateSource {
         val gate = CompletableDeferred<Unit>()
         var checks = 0; var downloads = 0
-        override suspend fun check(): UpdateManifest { checks++; gate.await(); return manifest }
+        var fail = false
+        override suspend fun check(): UpdateManifest {
+            checks++; gate.await()
+            if (fail) throw UpdateFailure("虚构连接错误")
+            return manifest
+        }
         override suspend fun download(manifest: UpdateManifest, file: File, etag: String?,
             saveEtag: (String?) -> Unit, progress: (Long) -> Unit) { downloads++; awaitCancellation() }
     }
@@ -88,7 +93,37 @@ class UpdatePromptIntegrationTest {
     private fun openManualCheck() {
         compose.onNodeWithText("我的", substring = false).performClick()
         compose.onNodeWithTag("my_UPDATES").performScrollTo().performClick()
-        compose.onNodeWithTag("check_update").performScrollTo().performClick()
+    }
+
+    @Test fun currentVersionFromMineShowsOnlyNoticeWithoutOpeningDetailsAndDoesNotRepeatOnRotation() {
+        compose.runOnUiThread { source.manifest = manifest.copy(versionCode = 19); source.gate.complete(Unit) }
+        compose.waitUntil(5000) { repository.state.value.phase == UpdatePhase.CURRENT }
+        compose.onNodeWithText("已是最新，无需更新").assertDoesNotExist()
+        openManualCheck()
+        compose.onNodeWithText("已是最新，无需更新").assertIsDisplayed()
+        compose.onNodeWithTag("update_card").assertDoesNotExist()
+        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
+        assertEquals(2, source.checks); assertNull(repository.state.value.checkNotice)
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("已是最新，无需更新").assertDoesNotExist()
+        assertEquals(2, source.checks)
+        compose.onNodeWithTag("my_UPDATES").performScrollTo().performClick()
+        compose.onNodeWithText("已是最新，无需更新").assertIsDisplayed()
+        assertEquals(3, source.checks)
+    }
+
+    @Test fun manualFailureInMineShowsReasonAndCheckingDisablesRepeatedClicks() {
+        compose.onNodeWithText("我的", substring = false).performClick()
+        compose.onNodeWithTag("my_UPDATES").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("my_update_checking").assertIsDisplayed()
+        compose.runOnUiThread { source.fail = true; source.gate.complete(Unit) }
+        compose.waitUntil(5000) { repository.state.value.phase != UpdatePhase.CHECKING }
+        compose.onNodeWithText("虚构连接错误").assertDoesNotExist()
+        compose.onNodeWithTag("my_UPDATES").performClick()
+        compose.onNodeWithText("虚构连接错误").assertIsDisplayed()
+        compose.onNodeWithText("发布页", substring = false).assertIsDisplayed()
+        compose.onNodeWithTag("update_card").assertDoesNotExist()
+        assertEquals(2, source.checks); assertEquals(0, source.downloads)
     }
 
     @Test fun startupButtonsHaveRequestedOrderAndCancelDoesNotDownloadOrRepeatOnRotation() {
@@ -129,6 +164,18 @@ class UpdatePromptIntegrationTest {
         compose.onNodeWithTag("accept_update_prompt").assertDoesNotExist()
         assertEquals(UpdatePhase.DOWNLOADING, repository.state.value.phase)
         assertEquals(1, source.checks)
+    }
+
+    @Test fun pausedDownloadRemainsAccessibleFromMineWithoutReplacingItWithAnotherCheck() {
+        showPrompt(); compose.onNodeWithTag("accept_update_prompt").performClick()
+        compose.waitUntil(5000) { source.downloads == 1 }
+        compose.runOnUiThread { repository.pause() }
+        compose.waitUntil(5000) { repository.state.value.phase == UpdatePhase.PAUSED }
+        compose.onNodeWithText("我的", substring = false).performClick()
+        compose.onNodeWithTag("my_UPDATES").performScrollTo().performClick()
+        compose.onNodeWithTag("update_card").assertExists()
+        compose.onNodeWithText("继续下载").performScrollTo().assertIsDisplayed()
+        assertEquals(1, source.checks); assertEquals(1, source.downloads)
     }
 
     @Test fun immediateMobileUpdateWaitsForSeparateConsentAndDecliningSendsNoApkRequest() {

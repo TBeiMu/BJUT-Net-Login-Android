@@ -69,7 +69,7 @@ class CampusConnectionNoticeTest {
         notice.update(success.copy(wifiConnected = false));assertNull(notice.state.value)
     }
 
-    @Test fun slowWarningStartsAt1500msAndDoesNotRestartForProgressOrVisibilityChanges() = runTest {
+    @Test fun slowWarningStartsAt1500msAndStaysUntilTaskCompletesAcrossProgressAndVisibilityChanges() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
         notice.setVisible(true); notice.update(running); runCurrent()
         advanceTimeBy(1000); notice.update(running.copy(message = "虚构进度变化")); runCurrent()
@@ -79,10 +79,28 @@ class CampusConnectionNoticeTest {
         assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         advanceTimeBy(1000); notice.setVisible(false); notice.setVisible(true); runCurrent()
         advanceTimeBy(1000); runCurrent()
-        assertNull(notice.state.value)
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         notice.update(running.copy(message = "虚构后续进度")); runCurrent()
         advanceTimeBy(5000); runCurrent()
-        assertNull(notice.state.value)
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+    }
+
+    @Test fun slowWarningFlowsDirectlyToFailureThenWeekWithNoIntermediateGap() = runTest {
+        val notice = CampusConnectionNotice(backgroundScope)
+        notice.setVisible(true); notice.update(running); runCurrent()
+        advanceTimeBy(1500); runCurrent()
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        // The old two-second warning timer used to restore the week at 3500 ms.
+        advanceTimeBy(3500); runCurrent()
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        notice.update(running.copy(outcome = LoginTaskOutcome.FAILED)); runCurrent()
+        assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        notice.update(running.copy(running = false, outcome = LoginTaskOutcome.FAILED)); runCurrent()
+        advanceTimeBy(1999); runCurrent()
+        assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        advanceTimeBy(1); runCurrent(); assertNull(notice.state.value)
+        notice.update(running.copy(running = false, outcome = LoginTaskOutcome.FAILED))
+        notice.setVisible(false); notice.setVisible(true); assertNull(notice.state.value)
     }
 
     @Test fun lateSuccessCanReplaceSlowWarningAndStillExpiresOnce() = runTest {
@@ -110,12 +128,28 @@ class CampusConnectionNoticeTest {
         notice.setVisible(false); notice.setVisible(true); assertNull(notice.state.value)
     }
 
-    @Test fun actualTimeoutDoesNotReplayAConsumedSlowWarning() = runTest {
+    @Test fun actualTaskTimeoutReplacesWarningWithFailureAndStartsItsOwnResultDuration() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
         notice.setVisible(true); notice.update(running); runCurrent()
         advanceTimeBy(3500); runCurrent()
-        assertNull(notice.state.value)
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         notice.update(running.copy(running = false, outcome = LoginTaskOutcome.TIMED_OUT))
+        runCurrent(); assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        advanceTimeBy(1999); runCurrent(); assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        advanceTimeBy(1); runCurrent(); assertNull(notice.state.value)
+    }
+
+    @Test fun backgroundSlowFailureWaitsForFreshWifiAndUnobstructedPageBeforeExpiring() = runTest {
+        val notice = CampusConnectionNotice(backgroundScope)
+        notice.setVisible(true); notice.update(running); runCurrent()
+        advanceTimeBy(1500); runCurrent()
+        notice.setVisible(false); notice.suspendObservation()
+        val failed = running.copy(running = false, outcome = LoginTaskOutcome.FAILED)
+        advanceTimeBy(3500); notice.update(failed); runCurrent()
+        assertNull(notice.state.value)
+        notice.resumeObservation(failed); advanceTimeBy(5000); runCurrent()
+        assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        notice.setVisible(true); runCurrent(); advanceTimeBy(2000); runCurrent()
         assertNull(notice.state.value)
     }
 

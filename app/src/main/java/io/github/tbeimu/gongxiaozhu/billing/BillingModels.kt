@@ -11,6 +11,7 @@ data class OnlineDevice(
     val mac: String,
     val loginTime: String,
     val minutes: Long?,
+    val traffic: BillingMetric? = null,
 ) {
     override fun toString() = "OnlineDevice(session=<redacted>)"
 }

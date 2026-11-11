@@ -123,9 +123,54 @@ class UpdatePromptTest {
         assertNull(repo.state.value.prompt); assertEquals(before, repo.state.value.message)
         repo.checkForPrompt(); runCurrent()
         assertEquals("虚构连接错误", repo.state.value.message); assertNull(repo.state.value.prompt)
+        assertEquals("虚构连接错误", repo.state.value.checkNotice?.message)
         val debug = repo(backgroundScope, enabled = false)
         debug.networkChanged(UpdateNetwork("wifi", source)); debug.enterForeground(); debug.checkForPrompt(); runCurrent()
         assertEquals(2, source.checks)
+    }
+
+    @Test fun currentVersionIsSilentAutomaticallyAndManualNoticeIsConsumedOnlyOncePerCheck() = runTest {
+        val source = Source(manifest.copy(versionCode = 19)); val repo = repo(backgroundScope)
+        repo.networkChanged(UpdateNetwork("wifi", source)); repo.enterForeground(); runCurrent()
+        assertNull(repo.state.value.prompt); assertNull(repo.state.value.checkNotice)
+        repo.checkForPrompt(); runCurrent()
+        val first = repo.state.value.checkNotice!!
+        assertEquals("已是最新，无需更新", first.message)
+        assertFalse(first.canOpenReleasePage)
+        assertEquals(first, repo.consumeCheckNotice(first.id)); assertNull(repo.consumeCheckNotice(first.id))
+        repo.checkForPrompt(); runCurrent()
+        val next = repo.state.value.checkNotice!!
+        assertNotEquals(first.id, next.id)
+        assertNull(repo.consumeCheckNotice(first.id)); assertEquals(next, repo.state.value.checkNotice)
+    }
+
+    @Test fun currentVersionFeedbackPreservesExistingDownloadAndDoesNotDependOnCurrentPhase() = runTest {
+        val store = UpdateStore(temp.newFolder())
+        store.save(SavedUpdate(manifest, downloadStarted = true)); store.partial.writeText("fictional-progress")
+        val source = Source(manifest.copy(versionCode = 19)); val repo = repo(backgroundScope, store)
+        repo.networkChanged(UpdateNetwork("wifi", source)); repo.enterForeground(); runCurrent()
+        repo.checkForPrompt(); runCurrent()
+        assertEquals(UpdatePhase.PAUSED, repo.state.value.phase)
+        assertEquals("已是最新，无需更新", repo.state.value.checkNotice?.message)
+        assertEquals("fictional-progress", store.partial.readText()); assertEquals(manifest, store.load()?.manifest)
+        repo.networkChanged(null); repo.checkForPrompt(); runCurrent()
+        assertEquals(UpdatePhase.PAUSED, repo.state.value.phase)
+        assertTrue(repo.state.value.checkNotice!!.canOpenReleasePage)
+        assertEquals("fictional-progress", store.partial.readText())
+    }
+
+    @Test fun manualNoNetworkAndTimeoutAreReportedButBackgroundCancellationLeavesNoNotice() = runTest {
+        val source = Source(manifest.copy(versionCode = 19)); val repo = repo(backgroundScope)
+        repo.enterForeground(); repo.checkForPrompt(); runCurrent()
+        assertNotNull(repo.state.value.checkNotice)
+        repo.networkChanged(UpdateNetwork("wifi", source)); runCurrent()
+        assertNull(repo.state.value.checkNotice)
+        source.gate = CompletableDeferred()
+        repo.checkForPrompt(); runCurrent(); advanceTimeBy(60_001); runCurrent()
+        assertEquals("检查更新超时，请稍后重试", repo.state.value.checkNotice?.message)
+        repo.checkForPrompt(); runCurrent(); repo.leaveForeground(); runCurrent()
+        source.gate!!.complete(Unit); runCurrent()
+        assertNull(repo.state.value.checkNotice); assertNull(repo.state.value.prompt)
     }
 
     @Test fun ignoredChoiceIsNotClaimedSavedWhenWritingFails() = runTest {

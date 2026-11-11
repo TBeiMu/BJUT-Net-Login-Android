@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
+import android.os.SystemClock
 import io.github.tbeimu.gongxiaozhu.data.*
 import io.github.tbeimu.gongxiaozhu.network.*
 import io.github.tbeimu.gongxiaozhu.schedule.*
@@ -110,15 +111,22 @@ class CampusTitleLifecycleTest {
         compose.onNodeWithTag("schedule_week_title").assertTextContains("第 1 周")
     }
 
-    @Test fun slowTitleKeepsTaskRunningAndLateFailureStillAppears() {
+    @Test fun slowTitleStaysThroughOldExpiryAndGoesStraightToFailureBeforeWeek() {
         val runtime = start()
         val original = compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot
         compose.waitUntil(5000) { compose.onAllNodes(hasText("登录超时")).fetchSemanticsNodes().isNotEmpty() }
         assertTrue(runtime.controller.state.value.running)
         assertEquals(original, compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot)
         screenshot("timeout")
-        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_week_title") and hasText("第 1 周")).fetchSemanticsNodes().isNotEmpty() }
+        val warningStarted = SystemClock.elapsedRealtime()
+        compose.waitUntil(5000) {
+            compose.onNodeWithTag("schedule_week_title").assertTextContains("登录超时")
+            SystemClock.elapsedRealtime() - warningStarted >= 3000
+        }
         assertTrue(runtime.controller.state.value.running)
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("schedule_week_title").assertTextContains("登录超时")
+        screenshot("timeout-held")
         compose.runOnUiThread { result.complete(LoginResult("虚构延迟失败")) }
         compose.waitUntil(5000) { compose.onAllNodes(hasText("校园网登录失败")).fetchSemanticsNodes().isNotEmpty() }
         assertFalse(runtime.controller.state.value.running)

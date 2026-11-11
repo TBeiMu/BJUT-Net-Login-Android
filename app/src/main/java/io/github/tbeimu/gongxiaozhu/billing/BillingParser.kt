@@ -9,6 +9,8 @@ import kotlinx.serialization.json.contentOrNull
 import org.jsoup.Jsoup
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.math.BigDecimal
+import java.math.RoundingMode
 
 internal class SelfLoginForm(val action: String, val checkcode: String, val captchaRequired: Boolean) {
     override fun toString() = "SelfLoginForm(fields=<redacted>)"
@@ -116,15 +118,27 @@ internal object BillingParser {
             if (it.length > 256 || it.any(Char::isISOControl)) throw BillingException(BillingProblem.RESPONSE)
             it
         }
+        fun JsonObject.flow(name: String): BigDecimal? = field(name).trim()
+            .takeIf { Regex("[0-9]{1,20}(?:\\.[0-9]{1,20})?").matches(it) }?.toBigDecimalOrNull()
+            // School's formatter applies parseInt to each counter before adding them.
+            ?.setScale(0, RoundingMode.DOWN)
         val devices = rows.map { element ->
             val row = element as? JsonObject ?: throw BillingException(BillingProblem.RESPONSE)
             val session = row.field("sessionId").takeIf(String::isNotBlank) ?: throw BillingException(BillingProblem.RESPONSE)
+            val down = row.flow("downFlow")
+            val up = row.flow("upFlow")
+            // School's online table: (downFlow + upFlow) / 1024, three decimals, MB.
+            val traffic = if (down != null && up != null) BillingMetric(
+                down.add(up).divide(BigDecimal(1024), 3, RoundingMode.HALF_UP).toPlainString(), "MB") else null
             OnlineDevice(session, row.field("ip"), row.field("ipv6"), row.field("mac"), row.field("loginTime"),
-                row.field("useTime").toLongOrNull()?.takeIf { it >= 0 }?.div(60))
+                row.field("useTime").toLongOrNull()?.takeIf { it >= 0 }?.div(60), traffic)
         }
         // The site repeats IPv4/IPv6 rows with the same session. Send at most one offline request.
         return devices.groupBy { it.sessionId }.map { (_, sameSession) ->
-            sameSession.first().copy(ipv6 = sameSession.map { it.ipv6 }.filter(String::isNotBlank).distinct().joinToString(" / "))
+            sameSession.first().copy(
+                ipv6 = sameSession.map { it.ipv6 }.filter(String::isNotBlank).distinct().joinToString(" / "),
+                // Repeated IPv6 rows are the same session, not extra usage. Conflicts stay unknown.
+                traffic = sameSession.mapNotNull { it.traffic }.distinct().singleOrNull())
         }
     }
 

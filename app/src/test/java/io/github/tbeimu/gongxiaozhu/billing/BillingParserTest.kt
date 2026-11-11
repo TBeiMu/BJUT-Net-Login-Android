@@ -58,6 +58,35 @@ class BillingParserTest {
         }
     }
 
+    @Test fun onlineTrafficUsesSchoolUploadAndDownloadCountersInMbWithThreeDecimals() {
+        val rows = """[
+            {"sessionId":"traffic-1","downFlow":"1024","upFlow":512},
+            {"sessionId":"traffic-2","downFlow":0,"upFlow":0},
+            {"sessionId":"traffic-3","downFlow":1,"upFlow":0},
+            {"sessionId":"traffic-4","downFlow":"1024.9","upFlow":512.7}
+        ]"""
+        assertEquals(listOf(BillingMetric("1.500", "MB"), BillingMetric("0.000", "MB"), BillingMetric("0.001", "MB"),
+            BillingMetric("1.500", "MB")),
+            BillingParser.devices(rows).map { it.traffic })
+    }
+
+    @Test fun missingOrInvalidTrafficIsUnknownRatherThanZeroOrAnUnverifiedField() {
+        listOf("", "\"downFlow\":10", "\"useFlow\":10", "\"downFlow\":-1,\"upFlow\":0",
+            "\"downFlow\":null,\"upFlow\":0", "\"downFlow\":true,\"upFlow\":0",
+            "\"downFlow\":\"not-a-number\",\"upFlow\":0", "\"downFlow\":\"1MB\",\"upFlow\":0").forEach { fields ->
+            val row = "{\"sessionId\":\"fictional\"${if (fields.isEmpty()) "" else "," + fields}}"
+            assertNull(BillingParser.devices("[$row]").single().traffic)
+        }
+    }
+
+    @Test fun repeatedSessionTrafficIsNeverAddedAndConflictingCountersStayUnknown() {
+        val row = """{"sessionId":"fictional","downFlow":1024,"upFlow":512}"""
+        assertEquals(BillingMetric("1.500", "MB"), BillingParser.devices("[$row,$row]").single().traffic)
+        assertEquals(BillingMetric("1.500", "MB"),
+            BillingParser.devices("[{\"sessionId\":\"fictional\"},$row]").single().traffic)
+        assertNull(BillingParser.devices("[$row,${row.replace("1024", "2048")}]").single().traffic)
+    }
+
     @Test fun offlineRequiresExplicitBooleanSuccess() {
         assertTrue(BillingParser.offlineSuccess("{\"success\":true}"))
         listOf("{\"success\":false}", "{\"success\":\"false\"}", "{}", "{\"success\":1}").forEach {

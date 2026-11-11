@@ -119,6 +119,7 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
     }
 
     fun networkChanged(value: UpdateNetwork?) {
+        if (network?.identity != value?.identity) mutable.update { it.copy(checkNotice = null) }
         network = value
         mutable.update { it.copy(networkKind = value?.kind) }
         if (authorization != null && authorization?.networkIdentity != value?.identity) {
@@ -158,23 +159,32 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
     private fun check(selectImmediately: Boolean, automatic: Boolean) {
         if (!state.value.enabled || task != null || state.value.busy || state.value.prompt != null ||
             (selectImmediately && state.value.manifest != null)) return
-        val selected = network ?: run { fail("请连接可上网的 WiFi 或开启移动数据"); return }
-        val previous = state.value
+        val selected = network ?: run {
+            val message = "请连接可上网的 WiFi 或开启移动数据"
+            if (selectImmediately) fail(message)
+            else if (!automatic) mutable.update { it.copy(message = message, checkNotice = checkNotice(message, true)) }
+            return
+        }
+        val previous = state.value.copy(checkNotice = null)
+        val token = generation
         activeNetwork = selected.identity
-        mutable.value = state.value.copy(phase = UpdatePhase.CHECKING, message = "正在检查更新…")
+        mutable.value = previous.copy(phase = UpdatePhase.CHECKING, message = "正在检查更新…")
         task = scope.launch(start = CoroutineStart.LAZY) {
             val ownJob = currentCoroutineContext()[Job]
             try {
                 val manifest = withTimeout(60_000) { selected.source.check().validate() }
                 currentCoroutineContext().ensureActive()
+                if (token != generation) return@launch
                 if (manifest.versionCode <= installedVersion) {
                     mutable.value = previous.copy(phase = if (previous.manifest == null) UpdatePhase.CURRENT else previous.phase,
-                        networkKind = network?.kind, message = "当前已是最新版本")
+                        networkKind = network?.kind, message = "已是最新，无需更新",
+                        checkNotice = if (!automatic && !selectImmediately) checkNotice("已是最新，无需更新") else null)
                 } else if (manifest.minSdk > sdk) {
                     if (automatic) mutable.value = previous.copy(networkKind = network?.kind)
                     else if (selectImmediately) fail("新版需要 Android API ${manifest.minSdk} 或以上，请打开发布页查看")
                     else mutable.value = previous.copy(networkKind = network?.kind,
-                        message = "新版需要 Android API ${manifest.minSdk} 或以上，请打开发布页查看")
+                        message = "新版需要 Android API ${manifest.minSdk} 或以上，请打开发布页查看",
+                        checkNotice = checkNotice("新版需要 Android API ${manifest.minSdk} 或以上，请打开发布页查看", true))
                 } else if (!selectImmediately) {
                     // A damaged local preference must never turn into an implicit ignore-all choice.
                     val ignoredVersion = if (automatic) runCatching { store.ignoredVersion() }.getOrNull() else null
@@ -187,14 +197,24 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
                     saved = SavedUpdate(manifest, downloadStarted = false).also(store::save)
                     mutable.value = state.value.copy(phase = UpdatePhase.AVAILABLE, manifest = manifest, message = "发现新版本")
                 }
+            } catch (_: TimeoutCancellationException) {
+                if (token != generation) return@launch
+                val message = "检查更新超时，请稍后重试"
+                if (automatic) mutable.value = previous.copy(networkKind = network?.kind, prompt = null)
+                else if (!selectImmediately) mutable.value = previous.copy(networkKind = network?.kind,
+                    message = message, checkNotice = checkNotice(message, true))
+                else fail(message)
             } catch (_: CancellationException) {
+                if (token != generation) return@launch
                 if (automatic || !selectImmediately) mutable.value = previous.copy(networkKind = network?.kind,
                     prompt = null, message = if (automatic) previous.message else "检查已停止，请手动重试")
                 else fail("检查已停止，请手动重试")
             } catch (error: Exception) {
+                if (token != generation) return@launch
                 if (automatic) mutable.value = previous.copy(networkKind = network?.kind, prompt = null)
                 else if (!selectImmediately) mutable.value = previous.copy(networkKind = network?.kind,
-                    message = error.safeUpdateMessage("检查更新失败，请检查网络后手动重试"))
+                    message = error.safeUpdateMessage("检查更新失败，请检查网络后手动重试"),
+                    checkNotice = checkNotice(error.safeUpdateMessage("检查更新失败，请检查网络后手动重试"), true))
                 else fail(error.safeUpdateMessage("检查更新失败，请检查网络后手动重试"))
             } finally {
                 activeNetwork = null
@@ -208,7 +228,7 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
     fun leaveForeground() {
         foreground = false
         automaticPending = false
-        mutable.update { it.copy(prompt = null) }
+        mutable.update { it.copy(prompt = null, checkNotice = null) }
         if (state.value.phase == UpdatePhase.CHECKING) task?.cancel()
         // Approved starts may already be queued in the foreground service. Unanswered prompts expire.
         if (state.value.mobileConfirmation != null) clearAuthorization("已取消移动数据下载，可稍后重新选择")
@@ -216,6 +236,15 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
 
     fun dismissPrompt(id: String) {
         if (state.value.prompt?.id == id) mutable.update { it.copy(prompt = null) }
+    }
+
+    private fun checkNotice(message: String, canOpenReleasePage: Boolean = false) =
+        UpdateCheckNotice(java.util.UUID.randomUUID().toString(), message, canOpenReleasePage)
+
+    fun consumeCheckNotice(id: String): UpdateCheckNotice? {
+        val notice = state.value.checkNotice?.takeIf { it.id == id } ?: return null
+        mutable.update { it.copy(checkNotice = null) }
+        return notice
     }
 
     fun ignorePrompt(id: String) {
@@ -402,7 +431,7 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
         activeDownloadPermit = null
         generation++
         previous?.cancel()
-        mutable.value = state.value.copy(phase = UpdatePhase.VERIFYING, mobileConfirmation = null, prompt = null,
+        mutable.value = state.value.copy(phase = UpdatePhase.VERIFYING, mobileConfirmation = null, prompt = null, checkNotice = null,
             downloadStarting = false, message = "正在清理更新文件…")
         task = scope.launch(start = CoroutineStart.LAZY) {
             previous?.join()

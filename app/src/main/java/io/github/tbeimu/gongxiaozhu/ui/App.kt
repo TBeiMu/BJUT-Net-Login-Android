@@ -70,6 +70,7 @@ import io.github.tbeimu.gongxiaozhu.BuildConfig
 import io.github.tbeimu.gongxiaozhu.data.AccountDraft
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
+import io.github.tbeimu.gongxiaozhu.update.UpdatePhase
 
 internal enum class Tab(val title: String) {
     SCHEDULE("课表"), BILLING("资费"), MY("我的")
@@ -112,6 +113,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     LaunchedEffect(state.message) {
         state.message?.let { snackbar.showSnackbar(it); model.clearMessage() }
     }
+    UpdateCheckFeedback(updateActions.repository, snackbar, updateUnobstructed && !updateDialogVisible, updateActions.releasePage)
 
     AppBackdrop(wallpaper) {
     Scaffold(
@@ -152,8 +154,15 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                     Button(onClick = { open(MyDestination.ACCOUNTS, Tab.BILLING) }) { Text("处理账号存储") }
                 } else BillingScreen(state, Modifier.padding(padding),
                     onAccounts = { open(MyDestination.ACCOUNTS, Tab.BILLING) },
-                    onQuery = model::queryBilling, onOffline = model::requestOffline)
-                Tab.MY -> MyHomeScreen(state, Modifier.padding(padding)) { open(it, Tab.MY) }
+                    onQuery = model::queryBilling, onOffline = model::requestOffline,
+                    onDialogVisibilityChanged = { localDialogVisible = it })
+                Tab.MY -> MyHomeScreen(state, Modifier.padding(padding), updates.phase == UpdatePhase.CHECKING) {
+                    if (it == MyDestination.UPDATES && updates.enabled &&
+                        updates.phase !in setOf(UpdatePhase.DOWNLOADING, UpdatePhase.PAUSED, UpdatePhase.VERIFYING, UpdatePhase.READY) &&
+                        !updates.downloadStarting) {
+                        updateActions.repository.checkForPrompt()
+                    } else open(it, Tab.MY)
+                }
             }
         }
     }

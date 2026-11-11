@@ -1,12 +1,10 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -17,11 +15,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -29,7 +24,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tbeimu.gongxiaozhu.BuildConfig
-import io.github.tbeimu.gongxiaozhu.R
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 import java.text.DateFormat
@@ -38,45 +32,42 @@ import java.util.Date
 internal enum class MyDestination(val title: String, val glyph: AppGlyph) {
     SCHEDULE("课表管理", AppGlyph.CALENDAR), ACCOUNTS("校园网账号", AppGlyph.PERSON),
     NETWORK("校园网连接", AppGlyph.WIFI), APPEARANCE("外观设置", AppGlyph.IMAGE),
-    UPDATES("应用更新", AppGlyph.DOWNLOAD), ABOUT("关于工小助", AppGlyph.INFO)
+    UPDATES("检查更新", AppGlyph.DOWNLOAD), ABOUT("关于工小助", AppGlyph.INFO)
 }
 
 @Composable
-internal fun MyHomeScreen(state: AppUiState, modifier: Modifier, onOpen: (MyDestination) -> Unit) {
+internal fun MyHomeScreen(state: AppUiState, modifier: Modifier, checkingUpdates: Boolean = false,
+    onOpen: (MyDestination) -> Unit) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         val identity = state.schedule.data.identity
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 22.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(identity?.name?.ifBlank { "同学" } ?: "工小助", fontSize = 24.sp,
-                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(if (state.schedule.blocked) "课表暂不可用" else identity?.let { maskUsername(it.studentId) } ?: "未绑定课表",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Box(Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer)) {
-                Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null,
-                    modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = 1.5f; scaleY = 1.5f }, contentScale = ContentScale.Crop)
-            }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(identity?.name?.ifBlank { "同学" } ?: "工小助", fontSize = 24.sp,
+                fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(if (state.schedule.blocked) "课表暂不可用" else identity?.let { maskUsername(it.studentId) } ?: "未绑定课表",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        MyGroup(MyDestination.entries.take(3), onOpen)
-        MyGroup(MyDestination.entries.drop(3), onOpen)
+        MyGroup(MyDestination.entries.take(3), checkingUpdates, onOpen)
+        MyGroup(MyDestination.entries.drop(3), checkingUpdates, onOpen)
     }
 }
 
 @Composable
-private fun MyGroup(entries: List<MyDestination>, onOpen: (MyDestination) -> Unit) {
+private fun MyGroup(entries: List<MyDestination>, checkingUpdates: Boolean, onOpen: (MyDestination) -> Unit) {
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = .58f)) {
         Column {
             entries.forEach { entry ->
-                Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).clickable { onOpen(entry) }
+                val checking = entry == MyDestination.UPDATES && checkingUpdates
+                Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).clickable(enabled = !checking) { onOpen(entry) }
                     .testTag("my_${entry.name}").padding(horizontal = 20.dp, vertical = 18.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     LineGlyph(entry.glyph, Modifier.size(23.dp), MaterialTheme.colorScheme.onSurface.copy(alpha = .85f))
                     Text(entry.title, Modifier.weight(1f), fontSize = 16.sp, lineHeight = 22.sp)
-                    LineGlyph(AppGlyph.CHEVRON, Modifier.size(16.dp), MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f))
+                    if (checking) CircularProgressIndicator(Modifier.size(16.dp).testTag("my_update_checking"), strokeWidth = 2.dp)
+                    else LineGlyph(AppGlyph.CHEVRON, Modifier.size(16.dp), MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f))
                 }
             }
         }

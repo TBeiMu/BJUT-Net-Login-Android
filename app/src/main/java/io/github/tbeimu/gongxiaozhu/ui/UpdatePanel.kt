@@ -19,7 +19,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -42,10 +45,28 @@ import io.github.tbeimu.gongxiaozhu.update.UpdateUiState
 import io.github.tbeimu.gongxiaozhu.update.MobileDownloadConfirmation
 import io.github.tbeimu.gongxiaozhu.update.UpdateRepository
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import java.util.Locale
 
 internal class UpdateActions(val repository: UpdateRepository, val download: () -> Unit,
     val install: () -> Unit, val releasePage: () -> Unit)
+
+@Composable
+internal fun UpdateCheckFeedback(repository: UpdateRepository, snackbar: SnackbarHostState, visible: Boolean,
+    onReleasePage: () -> Unit) {
+    // Consume before displaying so a rotation or a return to this page cannot repeat the result.
+    LaunchedEffect(repository, visible) {
+        if (!visible) return@LaunchedEffect
+        repository.state.map { it.checkNotice }.filterNotNull().collectLatest { notice ->
+            repository.consumeCheckNotice(notice.id)?.let {
+                val result = snackbar.showSnackbar(it.message, actionLabel = if (it.canOpenReleasePage) "发布页" else null)
+                if (result == SnackbarResult.ActionPerformed) onReleasePage()
+            }
+        }
+    }
+}
 
 @Composable
 internal fun rememberUpdateActions(): UpdateActions {

@@ -15,7 +15,7 @@ class OfflineConfirmation(val device: OnlineDevice, val tip: String) {
 data class BillingUiState(
     val running: Boolean = false,
     val snapshot: BillingSnapshot? = null,
-    val message: String = "使用首页所选账号登录学校自助服务，查询资费与在线设备",
+    val message: String = "",
     val captcha: ByteArray? = null,
     val confirmation: OfflineConfirmation? = null,
     val loadedAt: Long? = null,
@@ -52,7 +52,7 @@ class BillingController(
         if (accountId == id && !force) return
         val hadAccount = accountId != null
         accountId = id
-        reset("账号已更新，请登录查询该账号的资费", clearData = true)
+        reset("请登录查询", clearData = true)
         // Switching accounts is a deliberate action, but querying remains explicit.
         if (hadAccount || force) attempted = true else maybeQuery()
     }
@@ -81,7 +81,8 @@ class BillingController(
     fun leaveForeground() {
         foreground = false
         wifiObserved = false
-        reset(if (offlineSent) "已停止等待注销结果，请重新查询在线信息核对" else "已停止查询；下次进入资费页会重新查询", clearData = false)
+        reset(if (offlineSent) "已停止等待注销结果，请重新查询在线信息核对"
+            else if (state.running) "查询已暂停，请重新查询" else state.message, clearData = false)
     }
 
     fun setVisible(value: Boolean) {
@@ -109,7 +110,7 @@ class BillingController(
                 val selected = credentials(id) ?: throw BillingException(BillingProblem.REJECTED)
                 val result = current.refresh(selected, code)
                 if (token == generation) emit(BillingUiState(snapshot = result,
-                    message = result.notice ?: "资费已更新 · 数据来自学校自助服务", loadedAt = System.currentTimeMillis(), diagnostics = current.diagnostics))
+                    message = result.notice.orEmpty(), loadedAt = System.currentTimeMillis(), diagnostics = current.diagnostics))
             } catch (error: CancellationException) { throw error }
             catch (_: VaultUnavailableException) {
                 if (token == generation) { reset("账号存储不可用，查询已停止", true); storageFailure() }
@@ -165,7 +166,7 @@ class BillingController(
             try {
                 when (val result = current.submitWeb(pageToken, password, code)) {
                     is BillingWebResult.Success -> if (token == generation) emit(BillingUiState(snapshot = result.snapshot,
-                        message = result.snapshot.notice ?: "网页登录成功，资费已更新", loadedAt = System.currentTimeMillis(), diagnostics = current.diagnostics))
+                        message = result.snapshot.notice.orEmpty(), loadedAt = System.currentTimeMillis(), diagnostics = current.diagnostics))
                     is BillingWebResult.Continue -> if (token == generation) emit(state.copy(running = false,
                         webPage = result.page, message = result.problem.hint, diagnostics = current.diagnostics))
                 }

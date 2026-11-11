@@ -60,10 +60,10 @@ class CampusConnectionNotice(private val scope: CoroutineScope) {
     private fun publish() {
         val id = login.taskId?.takeIf { observing && login.wifiConnected && login.outcome != LoginTaskOutcome.CANCELLED }
         val phase = when {
-            login.running -> if (slow) CampusTitlePhase.TIMED_OUT else CampusTitlePhase.CONNECTING
             login.completed -> CampusTitlePhase.CONNECTED
-            login.outcome == LoginTaskOutcome.TIMED_OUT -> CampusTitlePhase.TIMED_OUT
-            login.outcome == LoginTaskOutcome.FAILED -> CampusTitlePhase.FAILED
+            login.outcome == LoginTaskOutcome.TIMED_OUT || login.outcome == LoginTaskOutcome.FAILED -> CampusTitlePhase.FAILED
+            login.outcome == LoginTaskOutcome.NEEDS_CHOICE -> null
+            login.running -> if (slow) CampusTitlePhase.TIMED_OUT else CampusTitlePhase.CONNECTING
             else -> null
         }
         if (id == null || phase == null) {
@@ -71,9 +71,11 @@ class CampusConnectionNotice(private val scope: CoroutineScope) {
             mutable.value = null
             return
         }
-        if (phase == CampusTitlePhase.CONNECTING) {
+        if (phase == CampusTitlePhase.CONNECTING || (phase == CampusTitlePhase.TIMED_OUT && login.running)) {
+            // Waiting for a slow task is continuous, not a finished result with a two-second expiry.
+            // Terminal outcomes take priority above so cleanup cannot briefly restore the week.
             stopDisplay()
-            mutable.value = CampusTitleNotice(id, CampusTitlePhase.CONNECTING)
+            mutable.value = CampusTitleNotice(id, phase)
             return
         }
         val presentation = CampusTitleNotice(id, phase)
