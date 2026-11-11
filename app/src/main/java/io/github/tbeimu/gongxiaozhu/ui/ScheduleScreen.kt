@@ -1,7 +1,11 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -26,6 +30,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -40,6 +45,7 @@ import io.github.tbeimu.gongxiaozhu.schedule.*
 import io.github.tbeimu.gongxiaozhu.network.CampusConnectionNotice
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import kotlin.math.roundToInt
 
 private val LessonColumnWidth = 42.dp
 
@@ -83,25 +89,50 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
             schedule == null -> ScheduleEmpty(if (state.data.pending == null) "把这一学期放进口袋" else "整学期尚未导入完成",
                 "通过 WiFi 或移动数据登录一次，自动导入整个学期。", if (state.data.pending == null) "导入研究生课表" else "登录后继续导入",
                 onImport, modifier = Modifier.weight(1f), enabled = !state.busy && !state.loading)
-            else -> Row(Modifier.weight(1f).fillMaxWidth().padding(start = 4.dp)) {
-                Box(Modifier.weight(1f).fillMaxHeight()) {
-                    WeekGrid(schedule, weekNumber, count, today.value, onCourse = {
-                        details = it; onDialogVisibilityChanged(true)
-                    }, onWeek = { delta -> selected = (weekNumber + delta).coerceIn(1, schedule.term.weekCount) })
-                    if (currentWeek != null && weekNumber != currentWeek) Surface(
-                        Modifier.align(Alignment.CenterEnd).padding(bottom = 36.dp), shape = RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp),
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = .94f), shadowElevation = 2.dp) {
-                        TextButton(onClick = {
-                            today.value = todayProvider()
-                            currentScheduleWeek(schedule, today.value)?.let { selected = it }
-                        }, modifier = Modifier.testTag("back_current_week")) { Text("回到本周", fontSize = 12.sp) }
+            else -> Box(Modifier.weight(1f).fillMaxWidth().padding(start = 4.dp).clipToBounds()
+                .testTag("schedule_week_area")) {
+                val gridBackdrop = rememberScheduleBackdrop()
+                Row(Modifier.fillMaxSize().recordScheduleBackdrop(gridBackdrop)) {
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        WeekGrid(schedule, weekNumber, count, today.value, onCourse = {
+                            details = it; onDialogVisibilityChanged(true)
+                        }, onWeek = { delta -> selected = (weekNumber + delta).coerceIn(1, schedule.term.weekCount) })
                     }
+                    WeekSelector(schedule, weekNumber, showWeeks, count, onExpand = { showWeeks = true }, onSelect = { selected = it; showWeeks = false })
                 }
-                WeekSelector(schedule, weekNumber, showWeeks, count, onExpand = { showWeeks = true }, onSelect = { selected = it; showWeeks = false })
+                BackToWeekOverlay(currentWeek != null && weekNumber != currentWeek && !showWeeks,
+                    gridBackdrop, schedule.term.weekCount, onClick = {
+                        today.value = todayProvider()
+                        currentScheduleWeek(schedule, today.value)?.let { selected = it }
+                    })
             }
         }
     }
     details?.let { CourseDetails(it) { details = null; onDialogVisibilityChanged(cancelImportConfirmation && state.canCancelImport) } }
+}
+
+/** Share the same centered dot geometry with the floating button below it. */
+private fun weekDotGroupHeight(height: Dp, weeks: Int): Dp =
+    (minOf(height * .55f, 10.dp * weeks) + 6.dp).coerceAtMost(height)
+
+@Composable
+private fun BackToWeekOverlay(visible: Boolean, backdrop: ScheduleBackdrop, weeks: Int, onClick: () -> Unit) {
+    Layout(modifier = Modifier.fillMaxSize(), content = {
+        AnimatedVisibility(visible = visible,
+            enter = slideInHorizontally(tween(360, easing = FastOutSlowInEasing)) { it },
+            exit = slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it },
+            label = "回到本周从右侧滑入") {
+            FrostedBackToWeekButton(backdrop, enabled = visible, onClick = onClick)
+        }
+    }) { measurables, constraints ->
+        val button = measurables.singleOrNull()?.measure(constraints.copy(minWidth = 0, minHeight = 0))
+        val groupHeight = weekDotGroupHeight(constraints.maxHeight.toDp(), weeks).toPx()
+        val top = ((constraints.maxHeight + groupHeight) / 2f + 4.dp.toPx()).roundToInt()
+            .coerceIn(0, (constraints.maxHeight - (button?.height ?: 0)).coerceAtLeast(0))
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            button?.place(constraints.maxWidth - button.width, top)
+        }
+    }
 }
 
 @Composable
@@ -278,12 +309,14 @@ private fun ScheduleDates(week: ScheduleWeek, today: LocalDate) {
 @Composable
 private fun WeekSelector(schedule: SemesterSchedule, selected: Int, expanded: Boolean, count: Int, onExpand: () -> Unit, onSelect: (Int) -> Unit) {
     val color = MaterialTheme.colorScheme.primary
-    if (!expanded) Canvas(Modifier.width(18.dp).fillMaxHeight().clickable(onClick = onExpand)
-        .semantics { contentDescription = "展开周次列表" }.testTag("week_dots")) {
-        val span = minOf(size.height * .55f, schedule.term.weekCount * 10.dp.toPx()); val gap = span / schedule.term.weekCount
-        val start = (size.height - span) / 2
-        repeat(schedule.term.weekCount) { index -> drawCircle(color.copy(alpha = if (index+1 == selected) 1f else .22f),
-            if(index+1 == selected) 2.6.dp.toPx() else 1.6.dp.toPx(), Offset(size.width/2, start+gap*(index+.5f))) }
+    if (!expanded) BoxWithConstraints(Modifier.width(18.dp).fillMaxHeight()) {
+        Canvas(Modifier.fillMaxWidth().height(weekDotGroupHeight(maxHeight, schedule.term.weekCount))
+            .align(Alignment.Center).clickable(onClick = onExpand)
+            .semantics { contentDescription = "展开周次列表" }.testTag("week_dots")) {
+            val gap = (size.height - 6.dp.toPx()).coerceAtLeast(0f) / schedule.term.weekCount
+            repeat(schedule.term.weekCount) { index -> drawCircle(color.copy(alpha = if(index+1 == selected) 1f else .22f),
+                if(index+1 == selected) 2.6.dp.toPx() else 1.6.dp.toPx(), Offset(size.width/2, 3.dp.toPx()+gap*(index+.5f))) }
+        }
     } else {
         val list = rememberLazyListState()
         LaunchedEffect(selected) { list.scrollToItem((selected-2).coerceAtLeast(0)) }

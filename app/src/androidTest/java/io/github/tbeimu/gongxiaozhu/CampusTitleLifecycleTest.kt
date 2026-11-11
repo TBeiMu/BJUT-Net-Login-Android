@@ -105,21 +105,20 @@ class CampusTitleLifecycleTest {
         compose.onNodeWithTag("schedule_week_title").assertTextContains("第 1 周")
     }
 
-    @Test fun failedAuthenticationShowsFailureThenRestoresWeekWithoutSuccess() {
+    @Test fun quickFailureRestoresWeekWithoutAFailureTitleOrSuccess() {
         val runtime = start()
         compose.onNodeWithTag("schedule_week_title").assertTextContains("正在登录校园网")
         compose.runOnUiThread { result.complete(LoginResult("虚构认证失败")) }
         compose.waitUntil(5000) { !runtime.controller.state.value.running }
         compose.onNodeWithText("校园网已连接").assertDoesNotExist()
-        compose.onNodeWithTag("schedule_week_title").assertTextContains("校园网登录失败")
-        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_week_title") and hasText("第 1 周")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("校园网登录失败").assertDoesNotExist()
         compose.onNodeWithTag("schedule_week_title").assertTextContains("第 1 周")
     }
 
-    @Test fun shortTimeoutAndFailureDoNotStopAuthenticationAndLateFailureDoesNotReplay() {
+    @Test fun threeSecondTimeoutDisappearsAfterOneSecondAndAuthenticationContinues() {
         val runtime = start()
         val original = compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot
-        // Rotating during CONNECTING must not restart the 1.5-second wait deadline.
+        // Rotating during CONNECTING must not restart the three-second wait deadline.
         compose.activityRule.scenario.recreate()
         val events = java.util.Collections.synchronizedList(mutableListOf<Pair<CampusTitlePhase?, Long>>())
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -129,17 +128,13 @@ class CampusTitleLifecycleTest {
             }
             compose.waitUntil(5000) { compose.onAllNodes(hasText("登录超时")).fetchSemanticsNodes().isNotEmpty() }
             screenshot("timeout-short")
-            compose.waitUntil(5000) { compose.onAllNodes(hasText("校园网登录失败")).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithTag("schedule_week_title").assertTextContains("校园网登录失败")
             assertTrue(runtime.controller.state.value.running)
             assertNull(runtime.controller.state.value.outcome)
             assertEquals(original, compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot)
-            screenshot("failure-short")
             compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_week_title") and hasText("第 1 周")).fetchSemanticsNodes().isNotEmpty() }
             val sequence = synchronized(events) { events.dropWhile { it.first != CampusTitlePhase.TIMED_OUT } }
-            assertEquals(listOf(CampusTitlePhase.TIMED_OUT, CampusTitlePhase.FAILED, null), sequence.map { it.first })
+            assertEquals(listOf(CampusTitlePhase.TIMED_OUT, null), sequence.map { it.first })
             assertTrue(sequence[1].second - sequence[0].second in 900..1400)
-            assertTrue(sequence[2].second - sequence[1].second in 900..1400)
             assertTrue(runtime.controller.state.value.running)
             compose.runOnUiThread { result.complete(LoginResult("虚构延迟失败")) }
             compose.waitUntil(5000) { !runtime.controller.state.value.running }
@@ -150,7 +145,7 @@ class CampusTitleLifecycleTest {
 
     @Test fun successAfterTheShortSequenceHasFinishedStillShowsConnected() {
         val runtime = start()
-        compose.waitUntil(5000) { compose.onAllNodes(hasText("校园网登录失败")).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(5000) { compose.onAllNodes(hasText("登录超时")).fetchSemanticsNodes().isNotEmpty() }
         compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_week_title") and hasText("第 1 周")).fetchSemanticsNodes().isNotEmpty() }
         assertTrue(runtime.controller.state.value.running); assertNull(runtime.controller.state.value.outcome)
         compose.runOnUiThread { result.complete(LoginResult("虚构延迟成功", completed = true)) }

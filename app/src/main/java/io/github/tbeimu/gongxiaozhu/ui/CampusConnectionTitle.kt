@@ -36,7 +36,6 @@ internal fun CampusConnectionTitle(weekTitle: String, notice: CampusConnectionNo
             CampusTitlePhase.CONNECTING -> "正在登录校园网"
             CampusTitlePhase.CONNECTED -> "校园网已连接"
             CampusTitlePhase.TIMED_OUT -> "登录超时"
-            CampusTitlePhase.FAILED -> "校园网登录失败"
             null -> weekTitle
         }, Modifier.fillMaxWidth().then(if (value != null) Modifier.testTag("campus_connection_title") else Modifier),
             textAlign = TextAlign.Start, color = MaterialTheme.colorScheme.onBackground,

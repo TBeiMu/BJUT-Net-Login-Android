@@ -15,6 +15,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -98,20 +99,23 @@ internal fun rememberWallpaper(): WallpaperState {
 
 @Composable
 internal fun AppBackdrop(wallpaper: WallpaperState, content: @Composable () -> Unit) {
+    val backdrop = rememberScheduleBackdrop()
     val dark = isSystemInDarkTheme()
     val colors = if (dark) listOf(Color(0xFF122A43), Color(0xFF173C4D), Color(0xFF182839))
         else listOf(Color(0xFFA9CDF4), Color(0xFFD0EAF0), Color(0xFFE5E8FA))
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(colors))) {
-        wallpaper.image?.let { Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-            ?: Canvas(Modifier.fillMaxSize()) {
-                val wave = Path().apply {
-                    moveTo(0f, size.height * .7f)
-                    cubicTo(size.width * .35f, size.height * .44f, size.width * .8f, size.height * .95f, size.width, size.height * .66f)
-                    lineTo(size.width, size.height); lineTo(0f, size.height); close()
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().recordScheduleBackdrop(backdrop).background(Brush.verticalGradient(colors))) {
+            wallpaper.image?.let { Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                ?: Canvas(Modifier.fillMaxSize()) {
+                    val wave = Path().apply {
+                        moveTo(0f, size.height * .7f)
+                        cubicTo(size.width * .35f, size.height * .44f, size.width * .8f, size.height * .95f, size.width, size.height * .66f)
+                        lineTo(size.width, size.height); lineTo(0f, size.height); close()
+                    }
+                    drawPath(wave, Color.White.copy(alpha = if (dark) .03f else .18f))
                 }
-                drawPath(wave, Color.White.copy(alpha = if (dark) .03f else .18f))
-            }
-        Box(Modifier.fillMaxSize().background(if (dark) Color(0xFF081523).copy(alpha = .65f) else Color.White.copy(alpha = .48f)))
-        content()
+            Box(Modifier.fillMaxSize().background(if (dark) Color(0xFF081523).copy(alpha = .65f) else Color.White.copy(alpha = .48f)))
+        }
+        CompositionLocalProvider(LocalWallpaperBackdrop provides backdrop) { content() }
     }
 }
