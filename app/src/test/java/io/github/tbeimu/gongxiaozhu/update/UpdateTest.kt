@@ -42,14 +42,16 @@ class UpdateTest {
         }
     }
     @Test fun redirectPolicyRejectsCrossSiteAndDowngrades() {
+        assertEquals("https://github.com/TBeiMu/BJUT_gxz/releases/latest/download/update.json", UPDATE_URL)
+        assertEquals("https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.3.0/gongxiaozhu.apk", manifest.apkUrl)
         val initial = UPDATE_URL.toHttpUrl()
         assertTrue(allowedUpdateUrl(initial, initial))
         assertTrue(allowedUpdateUrl("$RELEASES_URL/download/v0.3.0/update.json".toHttpUrl(), initial))
         assertTrue(allowedUpdateUrl("https://release-assets.githubusercontent.com/example?token=fake".toHttpUrl(), initial))
-        listOf("http://github.com/TBeiMu/BJUT-Net-Login-Android/releases/latest/download/update.json",
+        listOf("http://github.com/TBeiMu/BJUT_gxz/releases/latest/download/update.json",
             "https://github.com.evil.example/file", "https://github.com/other/repo/releases/download/v0.3.0/update.json",
             "https://user@release-assets.githubusercontent.com/file", "https://release-assets.githubusercontent.com:444/file",
-            "https://github.com/TBeiMu/BJUT-Net-Login-Android/releases/download/v0.3.0/update.json?q=x").forEach {
+            "https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.3.0/update.json?q=x").forEach {
             assertFalse(it, allowedUpdateUrl(it.toHttpUrl(), initial))
         }
         assertFalse(allowedUpdateUrl(manifest.copy(versionName = "0.4.0").apkUrl.toHttpUrl(), manifest.apkUrl.toHttpUrl()))

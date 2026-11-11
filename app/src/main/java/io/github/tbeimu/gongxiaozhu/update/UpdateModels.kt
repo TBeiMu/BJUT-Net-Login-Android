@@ -5,7 +5,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
-internal const val RELEASES_URL = "https://github.com/TBeiMu/BJUT-Net-Login-Android/releases"
+internal const val RELEASES_URL = "https://github.com/TBeiMu/BJUT_gxz/releases"
 internal const val UPDATE_URL = "$RELEASES_URL/latest/download/update.json"
 internal val updateJson = Json { ignoreUnknownKeys = true }
 
@@ -74,7 +74,7 @@ internal fun allowedUpdateUrl(url: HttpUrl, initial: HttpUrl): Boolean {
     if (url.host != "github.com" || url.query != null) return false
     if (url == initial) return true
     return initial.toString() == UPDATE_URL &&
-        Regex("/TBeiMu/BJUT-Net-Login-Android/releases/download/v[0-9]+\\.[0-9]+\\.[0-9]+/update\\.json")
+        Regex("/TBeiMu/BJUT_gxz/releases/download/v[0-9]+\\.[0-9]+\\.[0-9]+/update\\.json")
             .matches(url.encodedPath)
 }
 
