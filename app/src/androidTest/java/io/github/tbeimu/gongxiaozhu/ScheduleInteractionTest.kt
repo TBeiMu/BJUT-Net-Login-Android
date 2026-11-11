@@ -138,14 +138,14 @@ class ScheduleInteractionTest {
             testScope.advanceTimeBy(1499); testScope.runCurrent(); compose.waitForIdle()
             compose.onNodeWithTag("schedule_week_title").assertTextContains("正在登录校园网")
             testScope.advanceTimeBy(1); testScope.runCurrent(); compose.waitForIdle()
-            compose.onNodeWithTag("schedule_week_title").assertTextContains("正在登录校园网")
+            compose.onNodeWithTag("schedule_week_title").assertTextContains("登录超时")
             assertEquals(original, compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot)
             testScope.advanceTimeBy(2000); testScope.runCurrent(); compose.waitForIdle()
-            compose.onNodeWithTag("schedule_week_title").assertTextContains("正在登录校园网")
+            compose.onNodeWithTag("schedule_week_title").assertTextContains("第 1 周")
             compose.runOnUiThread { notice.update(running.copy(running = false, completed = true)) }
             testScope.runCurrent(); compose.onNodeWithTag("schedule_week_title").assertTextContains("校园网已连接")
             compose.runOnUiThread { notice.update(running.copy(taskId = "fake-failure-task")) }
-            testScope.runCurrent(); testScope.advanceTimeBy(3000); testScope.runCurrent(); compose.waitForIdle()
+            testScope.runCurrent(); testScope.advanceTimeBy(1500); testScope.runCurrent(); compose.waitForIdle()
             compose.runOnUiThread { notice.update(running.copy(taskId = "fake-failure-task", running = false,
                 outcome = LoginTaskOutcome.FAILED)) }
             testScope.runCurrent(); compose.onNodeWithTag("schedule_week_title").assertTextContains("登录超时")

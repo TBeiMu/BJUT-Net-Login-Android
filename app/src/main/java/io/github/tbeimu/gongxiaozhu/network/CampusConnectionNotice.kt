@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+/** Presentation only. A short FAILED title never changes the real LoginTaskOutcome. */
 enum class CampusTitlePhase { CONNECTING, CONNECTED, TIMED_OUT, FAILED }
 data class CampusTitleNotice(val taskId: String, val phase: CampusTitlePhase)
 
@@ -65,11 +66,11 @@ class CampusConnectionNotice(private val scope: CoroutineScope) {
         val id = login.taskId?.takeIf { observing && login.wifiConnected && login.outcome != LoginTaskOutcome.CANCELLED }
         val phase = when {
             login.completed -> CampusTitlePhase.CONNECTED
-            login.outcome == LoginTaskOutcome.TIMED_OUT || login.outcome == LoginTaskOutcome.FAILED ->
+            login.outcome == LoginTaskOutcome.NEEDS_CHOICE -> null
+            (login.running && slow) || login.outcome == LoginTaskOutcome.TIMED_OUT || login.outcome == LoginTaskOutcome.FAILED ->
                 if ((slow || login.outcome == LoginTaskOutcome.TIMED_OUT) &&
                     (displayed?.phase == CampusTitlePhase.TIMED_OUT || CampusTitlePhase.TIMED_OUT !in consumed))
                     CampusTitlePhase.TIMED_OUT else CampusTitlePhase.FAILED
-            login.outcome == LoginTaskOutcome.NEEDS_CHOICE -> null
             login.running -> CampusTitlePhase.CONNECTING
             else -> null
         }
@@ -79,8 +80,7 @@ class CampusConnectionNotice(private val scope: CoroutineScope) {
             return
         }
         if (phase == CampusTitlePhase.CONNECTING) {
-            // A short timeout/failure sequence is presented only after a real terminal outcome.
-            // A slow, still-running task must never be reported as a failed authentication.
+            // Only the title expires. Authentication continues independently and can publish success.
             stopDisplay()
             mutable.value = CampusTitleNotice(id, phase)
             return

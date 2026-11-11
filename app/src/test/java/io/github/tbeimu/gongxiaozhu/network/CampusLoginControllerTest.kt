@@ -184,32 +184,37 @@ class CampusLoginControllerTest {
         backgroundScope.launch { f.controller.state.collect { notice.update(it) } }
         f.ready(wifi); f.start(); runCurrent()
         advanceTimeBy(1500); runCurrent()
-        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         assertTrue(f.controller.state.value.running); assertEquals(1, calls)
         advanceTimeBy(2500); runCurrent()
-        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
+        assertNull(notice.state.value)
         assertTrue(f.controller.state.value.running); assertEquals(1, calls)
         result.complete(LoginResult("虚构延迟成功", completed = true)); runCurrent()
         assertEquals(CampusTitlePhase.CONNECTED, notice.state.value?.phase)
         assertTrue(f.controller.state.value.completed); assertEquals(1, calls)
     }
 
-    @Test fun slowTitleFlowsToFailureAtHardDeadlineWithoutRestartingAuthentication() = runTest {
+    @Test fun shortTitlesNeverCancelTheTaskAndHardDeadlineDoesNotReplayThem() = runTest {
         var calls = 0
         val f = Fixture(backgroundScope, CampusAuthenticator { _, _, _, _ -> calls++; awaitCancellation() })
         val notice = CampusConnectionNotice(backgroundScope)
         notice.setVisible(true)
         backgroundScope.launch { f.controller.state.collect { notice.update(it) } }
         f.ready(wifi); f.start(); runCurrent()
-        advanceTimeBy(74_999); runCurrent()
+        advanceTimeBy(1500); runCurrent()
+        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        assertTrue(f.controller.state.value.running); assertNull(f.controller.state.value.outcome)
+        advanceTimeBy(1000); runCurrent()
+        assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
+        assertTrue(f.controller.state.value.running); assertNull(f.controller.state.value.outcome)
+        advanceTimeBy(1000); runCurrent(); assertNull(notice.state.value)
+        advanceTimeBy(71_499); runCurrent()
         assertTrue(f.controller.state.value.running)
-        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
+        assertNull(notice.state.value)
         advanceTimeBy(1); runCurrent()
         assertFalse(f.controller.state.value.running)
         assertEquals(LoginTaskOutcome.TIMED_OUT, f.controller.state.value.outcome)
-        assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        assertNull(notice.state.value)
         assertEquals(1, calls)
-        advanceTimeBy(1000); runCurrent(); assertEquals(CampusTitlePhase.FAILED, notice.state.value?.phase)
-        advanceTimeBy(1000); runCurrent(); assertNull(notice.state.value)
     }
 }
