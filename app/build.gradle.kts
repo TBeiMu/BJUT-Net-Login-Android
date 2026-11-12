@@ -16,8 +16,8 @@ android {
         applicationId = "io.github.tbeimu.gongxiaozhu"
         minSdk = 31
         targetSdk = 36
-        versionCode = 30
-        versionName = "0.4.12"
+        versionCode = 31
+        versionName = "0.5.0"
         val releaseCertificate = rootProject.file("release-signing.sha256").readText().trim().lowercase()
         require(Regex("[a-f0-9]{64}").matches(releaseCertificate)) { "正式签名摘要格式错误" }
         buildConfigField("String", "RELEASE_CERT_SHA256", "\"$releaseCertificate\"")
@@ -57,6 +57,24 @@ android {
         compose = true
         buildConfig = true
     }
+    testOptions {
+        unitTests {
+            // DesignPreviewTest renders the real screens on the JVM; no emulator or school account needed.
+            isIncludeAndroidResources = true
+            all { test ->
+                // Design previews render frames on the JVM; leave them out of ordinary runs and CI entirely.
+                if (!providers.gradleProperty("gxzPreview").isPresent && !providers.gradleProperty("gxzMotion").isPresent) {
+                    test.exclude("**/DesignPreviewTest*", "**/MotionPreviewTest*")
+                }
+                test.systemProperty("roborazzi.test.record", "true")
+                test.systemProperty("gxz.preview.dir", providers.gradleProperty("gxzPreviewDir").orNull
+                    ?: layout.buildDirectory.dir("design-preview").get().asFile.path)
+                providers.gradleProperty("gxzPreview").orNull?.let { test.systemProperty("gxz.preview", it) }
+                providers.gradleProperty("gxzMotion").orNull?.let { test.systemProperty("gxz.motion", it) }
+                providers.gradleProperty("gxzPreviewHome").orNull?.let { test.systemProperty("user.home", it) }
+            }
+        }
+    }
     lint {
         warningsAsErrors = true
         // v0.1.0 pins targetSdk 36. New target SDKs change runtime behavior and
@@ -94,6 +112,12 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.robolectric:robolectric:4.16.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.78.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.78.0")
+    testImplementation(platform("androidx.compose:compose-bom:2025.11.00"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.11.00"))

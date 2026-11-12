@@ -61,6 +61,9 @@ class ScheduleUiTest {
     @get:Rule val rules: RuleChain = RuleChain.outerRule(fixture).around(compose)
 
     @Test fun nativeWeekTableAndMyPageKeepSeparateAccounts() {
+        // The tab opens on today; the week table is one tap away and stays chosen across tabs and recreation.
+        compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("schedule_mode")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("schedule_mode").performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("schedule_pager")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("第 2 周").assertExists()
         screenshot("schedule-preview.png")

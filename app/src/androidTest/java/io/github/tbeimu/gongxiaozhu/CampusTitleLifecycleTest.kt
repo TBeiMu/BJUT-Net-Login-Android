@@ -63,6 +63,9 @@ class CampusTitleLifecycleTest {
         val model = ViewModelProvider(compose.activity).get(AppViewModel::class.java)
         compose.waitUntil(10_000) { !model.state.value.loading && !model.state.value.schedule.loading &&
             (runtime.connections.value as? WifiObservation.Current)?.connection != null }
+        // These checks are about the week title and grid; the tab opens on today, so switch to the week first.
+        compose.onNodeWithTag("schedule_mode").performClick()
+        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("week_grid_1")).fetchSemanticsNodes().isNotEmpty() }
         compose.runOnUiThread {
             CampusLoginController::class.java.getDeclaredField("authenticator").apply { isAccessible = true }
                 .set(runtime.controller, CampusAuthenticator { _, _, _, _ -> result.await() })

@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -170,15 +169,16 @@ internal fun MobileDownloadDialog(confirmation: MobileDownloadConfirmation, onCo
 @Composable
 internal fun UpdateCard(state: UpdateUiState, onCheck: () -> Unit, onDownload: () -> Unit,
     onCancel: () -> Unit, onInstall: () -> Unit, onReleasePage: () -> Unit) {
-    Card(Modifier.fillMaxWidth().testTag("update_card")) {
-        Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("应用更新", style = MaterialTheme.typography.titleMedium)
-            Text("当前版本 ${BuildConfig.VERSION_NAME}")
-            if (state.enabled) Text("可用更新网络：${state.networkKind?.title ?: "未连接"}", style = MaterialTheme.typography.bodySmall)
-            Text(state.message, modifier = Modifier.testTag("update_status"))
+    val palette = gxz
+    GlassCard(Modifier.testTag("update_card")) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("应用更新", style = MaterialTheme.typography.titleLarge)
+            Text("当前版本 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
+            if (state.enabled) Text("可用更新网络：${state.networkKind?.title ?: "未连接"}", style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
+            Text(state.message, modifier = Modifier.testTag("update_status"), style = MaterialTheme.typography.bodyMedium)
             state.manifest?.let { manifest ->
-                Text("新版 ${manifest.versionName} · ${String.format(Locale.CHINA, "%.1f", manifest.apkSize / 1048576.0)} MB")
-                Text(manifest.releaseNotes.ifBlank { "暂无更新说明" }, style = MaterialTheme.typography.bodySmall)
+                Text("新版 ${manifest.versionName} · ${String.format(Locale.CHINA, "%.1f", manifest.apkSize / 1048576.0)} MB", style = MaterialTheme.typography.titleSmall)
+                Text(manifest.releaseNotes.ifBlank { "暂无更新说明" }, style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
             }
             if (state.downloadStarting) LinearProgressIndicator(Modifier.fillMaxWidth())
             when (state.phase) {

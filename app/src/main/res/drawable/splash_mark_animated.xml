@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash: a week timetable condenses into 工 (see MarkMotion.WEEK in ui/Brand.kt). -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:drawable="@drawable/splash_mark">
+    <target android:name="card0">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0" android:valueTo="0.876"
+                    android:startOffset="0" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0" android:valueTo="1.774"
+                    android:startOffset="0" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0.876" android:valueTo="1"
+                    android:startOffset="330" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="1.774" android:valueTo="1"
+                    android:startOffset="330" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateX" android:valueFrom="-5.95" android:valueTo="0"
+                    android:startOffset="330" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateY" android:valueFrom="3.45" android:valueTo="0"
+                    android:startOffset="330" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card0_fill">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0.28" android:valueTo="1"
+                    android:startOffset="330" android:duration="400" android:interpolator="@android:interpolator/linear" />
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="1" android:valueTo="0"
+                    android:startOffset="960" android:duration="40" android:interpolator="@android:interpolator/linear" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card1">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0" android:valueTo="0.876"
+                    android:startOffset="54" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0" android:valueTo="0.817"
+                    android:startOffset="54" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0.876" android:valueTo="1"
+                    android:startOffset="346" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0.817" android:valueTo="1"
+                    android:startOffset="346" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateX" android:valueFrom="-5.85" android:valueTo="0"
+                    android:startOffset="346" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateY" android:valueFrom="8.95" android:valueTo="0"
+                    android:startOffset="346" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card1_fill">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0.28" android:valueTo="1"
+                    android:startOffset="346" android:duration="400" android:interpolator="@android:interpolator/linear" />
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="1" android:valueTo="0"
+                    android:startOffset="960" android:duration="40" android:interpolator="@android:interpolator/linear" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card2">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0" android:valueTo="0.876"
+                    android:startOffset="120" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0" android:valueTo="0.817"
+                    android:startOffset="120" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0.876" android:valueTo="1"
+                    android:startOffset="362" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0.817" android:valueTo="1"
+                    android:startOffset="362" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateX" android:valueFrom="4.85" android:valueTo="0"
+                    android:startOffset="362" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateY" android:valueFrom="-2.05" android:valueTo="0"
+                    android:startOffset="362" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card2_fill">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0.28" android:valueTo="1"
+                    android:startOffset="362" android:duration="400" android:interpolator="@android:interpolator/linear" />
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="1" android:valueTo="0"
+                    android:startOffset="960" android:duration="40" android:interpolator="@android:interpolator/linear" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card3">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0" android:valueTo="0.876"
+                    android:startOffset="174" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0" android:valueTo="1.774"
+                    android:startOffset="174" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0.876" android:valueTo="1"
+                    android:startOffset="378" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="1.774" android:valueTo="1"
+                    android:startOffset="378" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateX" android:valueFrom="4.95" android:valueTo="0"
+                    android:startOffset="378" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateY" android:valueFrom="14.45" android:valueTo="0"
+                    android:startOffset="378" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card3_fill">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0.28" android:valueTo="1"
+                    android:startOffset="378" android:duration="400" android:interpolator="@android:interpolator/linear" />
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="1" android:valueTo="0"
+                    android:startOffset="960" android:duration="40" android:interpolator="@android:interpolator/linear" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card4">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0" android:valueTo="0.767"
+                    android:startOffset="94" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0" android:valueTo="0.816"
+                    android:startOffset="94" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0.767" android:valueTo="1"
+                    android:startOffset="394" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0.816" android:valueTo="1"
+                    android:startOffset="394" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateX" android:valueFrom="-0.5" android:valueTo="0"
+                    android:startOffset="394" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateY" android:valueFrom="-6.8" android:valueTo="0"
+                    android:startOffset="394" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card5">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0" android:valueTo="0.852"
+                    android:startOffset="42" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0" android:valueTo="0.817"
+                    android:startOffset="42" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0.852" android:valueTo="1"
+                    android:startOffset="410" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0.817" android:valueTo="1"
+                    android:startOffset="410" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateX" android:valueFrom="-0.1" android:valueTo="0"
+                    android:startOffset="410" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateY" android:valueFrom="-11.55" android:valueTo="0"
+                    android:startOffset="410" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card5_fill">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0.28" android:valueTo="1"
+                    android:startOffset="410" android:duration="400" android:interpolator="@android:interpolator/linear" />
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="1" android:valueTo="0"
+                    android:startOffset="960" android:duration="40" android:interpolator="@android:interpolator/linear" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card6">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0" android:valueTo="0.852"
+                    android:startOffset="82" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0" android:valueTo="1.774"
+                    android:startOffset="82" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0.852" android:valueTo="1"
+                    android:startOffset="426" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="1.774" android:valueTo="1"
+                    android:startOffset="426" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateX" android:valueFrom="-0.3" android:valueTo="0"
+                    android:startOffset="426" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateY" android:valueFrom="-6.05" android:valueTo="0"
+                    android:startOffset="426" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card6_fill">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0.28" android:valueTo="1"
+                    android:startOffset="426" android:duration="400" android:interpolator="@android:interpolator/linear" />
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="1" android:valueTo="0"
+                    android:startOffset="960" android:duration="40" android:interpolator="@android:interpolator/linear" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card7">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0" android:valueTo="0.852"
+                    android:startOffset="136" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0" android:valueTo="0.817"
+                    android:startOffset="136" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0.852" android:valueTo="1"
+                    android:startOffset="442" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0.817" android:valueTo="1"
+                    android:startOffset="442" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateX" android:valueFrom="-0.5" android:valueTo="0"
+                    android:startOffset="442" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateY" android:valueFrom="-0.55" android:valueTo="0"
+                    android:startOffset="442" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card7_fill">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0.28" android:valueTo="1"
+                    android:startOffset="442" android:duration="400" android:interpolator="@android:interpolator/linear" />
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="1" android:valueTo="0"
+                    android:startOffset="960" android:duration="40" android:interpolator="@android:interpolator/linear" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card8">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0" android:valueTo="0.852"
+                    android:startOffset="148" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0" android:valueTo="1.774"
+                    android:startOffset="148" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0.852" android:valueTo="1"
+                    android:startOffset="458" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="1.774" android:valueTo="1"
+                    android:startOffset="458" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateX" android:valueFrom="-0.7" android:valueTo="0"
+                    android:startOffset="458" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateY" android:valueFrom="-17.05" android:valueTo="0"
+                    android:startOffset="458" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card8_fill">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0.28" android:valueTo="1"
+                    android:startOffset="458" android:duration="400" android:interpolator="@android:interpolator/linear" />
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="1" android:valueTo="0"
+                    android:startOffset="960" android:duration="40" android:interpolator="@android:interpolator/linear" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card9">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0" android:valueTo="0.852"
+                    android:startOffset="216" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0" android:valueTo="0.817"
+                    android:startOffset="216" android:duration="240" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleX" android:valueFrom="0.852" android:valueTo="1"
+                    android:startOffset="474" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="scaleY" android:valueFrom="0.817" android:valueTo="1"
+                    android:startOffset="474" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateX" android:valueFrom="-0.9" android:valueTo="0"
+                    android:startOffset="474" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="translateY" android:valueFrom="-0.55" android:valueTo="0"
+                    android:startOffset="474" android:duration="400" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="card9_fill">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0.28" android:valueTo="1"
+                    android:startOffset="474" android:duration="400" android:interpolator="@android:interpolator/linear" />
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="1" android:valueTo="0"
+                    android:startOffset="960" android:duration="40" android:interpolator="@android:interpolator/linear" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="bars">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0" android:valueTo="1" android:startOffset="820" android:duration="160"
+                android:interpolator="@android:interpolator/fast_out_slow_in" />
+        </aapt:attr>
+    </target>
+</animated-vector>
