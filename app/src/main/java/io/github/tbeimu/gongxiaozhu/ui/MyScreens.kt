@@ -3,6 +3,7 @@ package io.github.tbeimu.gongxiaozhu.ui
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -12,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -25,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -32,6 +35,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.tbeimu.gongxiaozhu.BuildConfig
+import io.github.tbeimu.gongxiaozhu.R
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 import java.text.DateFormat
@@ -197,8 +201,8 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
                 MyDestination.APPEARANCE -> WallpaperSettingsPanel(wallpaper)
                 MyDestination.UPDATES -> UpdatePanel(updateActions)
                 MyDestination.ABOUT -> GlassCard(padding = PaddingValues(24.dp), spacing = 10.dp) {
-                    // The mark builds itself once from a week of classes each time the page opens.
-                    BrandLoader(Modifier.size(84.dp).padding(bottom = 6.dp), MarkMotion.WEEK)
+                    Image(painterResource(R.drawable.logo_bird), contentDescription = "工小助 Logo",
+                        modifier = Modifier.size(84.dp).clip(RoundedCornerShape(20.dp)).testTag("about_logo"))
                     Text("工小助", style = MaterialTheme.typography.displaySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Pill("版本 ${BuildConfig.VERSION_NAME}")

@@ -1,4 +1,6 @@
 <resources>
+    <!-- Preserve the pale background of the supplied logo in both themes. -->
+    <color name="logo_background">#FAFAFC</color>
     <!-- The mark: ink bars, vermilion stem, on paper. Night variants in values-night. -->
     <color name="logo_paper">#FBFAF8</color>
     <color name="logo_ink">#1B1D22</color>

@@ -253,7 +253,9 @@ class WeekPagerUiTest {
         drag(-.35f)
         compose.onNodeWithContentDescription("选择周次").performClick()
         compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
-        compose.onNodeWithTag("week_choice_2").performClick()
+        // Exercise programmatic selection while the old pager animation is still running.
+        // Pointer coordinates are unstable while the week list itself is sliding into place.
+        compose.onNodeWithTag("week_choice_2").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
         settle(); title(2)
         compose.onNodeWithTag("back_current_week").performClick()
         settle(); title(1)
