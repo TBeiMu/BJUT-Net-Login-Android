@@ -85,7 +85,7 @@ class CampusLoginService : Service() {
             Intent(this, CampusLoginService::class.java).setAction(CANCEL)
                 .setData("gongxiaozhu://cancel-login/$id".toUri()).putExtra(TASK_ID, id),
             PendingIntent.FLAG_IMMUTABLE)
-        return NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_update)
+        return NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_notification_mark)
             .setContentTitle("正在认证校园网").setContentText(state.message)
             .setContentIntent(open).setOngoing(true).setSilent(true).setOnlyAlertOnce(true)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)

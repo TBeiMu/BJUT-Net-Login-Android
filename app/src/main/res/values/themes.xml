@@ -2,6 +2,10 @@
     <style name="Theme.GongXiaoZhu" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#F5F8F6</item>
+        <item name="android:windowBackground">#F3F4F6</item>
+        <!-- Opening: a week timetable condenses into 工 (MarkMotion.WEEK, compressed to one second). -->
+        <item name="android:windowSplashScreenBackground">@color/logo_paper</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_mark_animated</item>
+        <item name="android:windowSplashScreenAnimationDuration">1000</item>
     </style>
 </resources>

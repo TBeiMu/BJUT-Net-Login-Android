@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.GongXiaoZhu" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#0F1115</item>
+        <item name="android:windowSplashScreenBackground">@color/logo_paper</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_mark_animated</item>
+        <item name="android:windowSplashScreenAnimationDuration">1000</item>
+    </style>
+</resources>

@@ -2,71 +2,91 @@ package io.github.tbeimu.gongxiaozhu.ui
 
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
-import io.github.tbeimu.gongxiaozhu.BuildConfig
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.tbeimu.gongxiaozhu.data.AccountDraft
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
@@ -115,32 +135,18 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     }
     UpdateCheckFeedback(updateActions.repository, snackbar, updateUnobstructed && !updateDialogVisible, updateActions.releasePage)
 
-    AppBackdrop(wallpaper) {
-    Scaffold(
-        containerColor = Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onBackground,
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .86f)) {
-                Tab.entries.forEach { item ->
-                    NavigationBarItem(selected = tab == item, onClick = { tab = item; destination = null },
-                        icon = { NavigationGlyph(item.ordinal) },
-                        label = { Text(item.title) })
-                }
-            }
-        },
-    ) { padding ->
-        val pageKey = destination?.let { "detail/${it.name}" } ?: "tab/${tab.name}"
-        pages.SaveableStateProvider(pageKey) {
-            val selected = destination
+    AppShell(tab, { tab = it; destination = null }, wallpaper, snackbar) { padding ->
+      ScreenHost(Screen(tab, destination)) { screen ->
+        pages.SaveableStateProvider(screen.key) {
+            val selected = screen.destination
             if (selected != null) {
                 MyDetailScreen(selected, state, Modifier.padding(padding), model, wallpaper,
                     onBack = ::back, onResetAccounts = { resetting = true },
                     onResetSchedule = { resetSchedule = true }, onDelete = { deleting = it }, updateActions = updateActions,
                     onDialogVisibilityChanged = { localDialogVisible = it })
-            } else when (tab) {
+            } else when (screen.tab) {
                 Tab.SCHEDULE -> Box(Modifier.padding(padding).fillMaxSize()) {
-                    ScheduleScreen(state.schedule, Modifier, model.scheduleController::start,
+                    ScheduleHome(state.schedule, Modifier, model.scheduleController::start,
                         { model.scheduleController.pause() }, model.scheduleController::reload,
                         { open(MyDestination.SCHEDULE, Tab.SCHEDULE) }, connectionNotice = model.connectionNotice,
                         titleUnobstructed = state.schedule.page == null && state.editor == null && !resetSchedule &&
@@ -149,9 +155,13 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                         onCancelImport = model.scheduleController::cancelImport,
                         onDialogVisibilityChanged = { localDialogVisible = it })
                 }
-                Tab.BILLING -> if (state.storageBlocked) Column(Modifier.padding(padding).padding(24.dp)) {
-                    Text("校园网账号存储暂不可用")
-                    Button(onClick = { open(MyDestination.ACCOUNTS, Tab.BILLING) }) { Text("处理账号存储") }
+                Tab.BILLING -> if (state.storageBlocked) Column(Modifier.padding(padding).padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    PageHeader("校园网资费", null)
+                    GlassCard {
+                        Text("校园网账号存储暂不可用", style = MaterialTheme.typography.titleMedium)
+                        CtaButton("处理账号存储", { open(MyDestination.ACCOUNTS, Tab.BILLING) })
+                    }
                 } else BillingScreen(state, Modifier.padding(padding),
                     onAccounts = { open(MyDestination.ACCOUNTS, Tab.BILLING) },
                     onQuery = model::queryBilling, onOffline = model::requestOffline,
@@ -165,7 +175,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                 }
             }
         }
-    }
+      }
     }
     UpdateDialogs(updates, updateActions, updateUnobstructed) { id ->
         if (updateActions.repository.acceptPrompt(id)) {
@@ -225,31 +235,85 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     }
 }
 
+/** Backdrop, floating dock and snackbars: the frame every page lives in. */
+@Composable
+internal fun AppShell(tab: Tab, onTab: (Tab) -> Unit, wallpaper: WallpaperState, snackbar: SnackbarHostState,
+    content: @Composable (PaddingValues) -> Unit) {
+    AppBackdrop(wallpaper) {
+        Scaffold(
+            containerColor = Color.Transparent,
+            contentColor = gxz.ink,
+            snackbarHost = { SnackbarHost(snackbar) { Snackbar(it, shape = RoundedCornerShape(16.dp)) } },
+            bottomBar = { Dock(tab, onTab) },
+            content = content,
+        )
+    }
+}
+
+/**
+ * A white capsule of three words. The chosen word is set in ink; a small vermilion dot glides
+ * beneath it on a spring. Nothing else competes with the page above.
+ */
+@Composable
+private fun Dock(tab: Tab, onSelect: (Tab) -> Unit) {
+    val palette = gxz
+    val haptic = LocalHapticFeedback.current
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(top = 6.dp, bottom = 12.dp), contentAlignment = Alignment.Center) {
+        BoxWithConstraints(Modifier.width(300.dp).glass(palette, CircleShape, strong = true)) {
+            val slot = maxWidth / Tab.entries.size
+            val x by animateDpAsState(slot * tab.ordinal + slot / 2 - 2.dp, spring(dampingRatio = .7f, stiffness = 420f),
+                label = "底栏选中点")
+            Row(Modifier.fillMaxWidth().selectableGroup()) {
+                Tab.entries.forEach { item ->
+                    val chosen = tab == item
+                    val color by animateColorAsState(if (chosen) palette.ink else palette.inkFaint, tween(Motion.MEDIUM), label = "底栏文字颜色")
+                    val interaction = remember { MutableInteractionSource() }
+                    Box(Modifier.weight(1f).heightIn(min = 58.dp).pressScale(interaction, .9f)
+                        .selectable(selected = chosen, interactionSource = interaction, indication = null, role = Role.Tab,
+                            onClick = {
+                                if (!chosen) haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                                onSelect(item)
+                            }), contentAlignment = Alignment.Center) {
+                        Text(item.title, color = color, style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp),
+                            fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1)
+                    }
+                }
+            }
+            Box(Modifier.align(Alignment.BottomStart).offset { IntOffset(x.roundToPx(), -9.dp.roundToPx()) }
+                .size(4.dp).clip(CircleShape).background(palette.accent))
+        }
+    }
+}
+
 @Composable
 internal fun Heading(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(title, style = MaterialTheme.typography.headlineMedium)
+        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
     }
 }
 
 @Composable
 internal fun Panel(content: @Composable () -> Unit) {
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-        Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
-    }
+    GlassCard { content() }
 }
 
 @Composable
 internal fun NetworkPanel(state: AppUiState, model: AppViewModel) {
-    Panel {
-        Text("校园网连接", style = MaterialTheme.typography.titleMedium)
-        Text(if (state.login.wifiConnected) "WiFi 已连接" else "等待连接 WiFi")
-        Text(state.login.message, modifier = Modifier.testTag("login_status"))
+    val palette = gxz
+    GlassCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            GlyphChip(AppGlyph.WIFI, tint = if (state.login.wifiConnected) palette.positive else palette.inkFaint)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(if (state.login.wifiConnected) "WiFi 已连接" else "等待连接 WiFi", style = MaterialTheme.typography.titleMedium)
+                Text(state.login.message, modifier = Modifier.testTag("login_status"),
+                    style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
+            }
+            // Logging in: the Wi-Fi signal straightens into 工 and back while the campus network answers.
+            if (state.login.running) BrandLoader(Modifier.size(34.dp), MarkMotion.SIGNAL)
+        }
         if (state.login.running) {
-            CircularProgressIndicator(Modifier.size(24.dp))
-            Text("可切换到后台或锁屏；划掉 App 会停止本次认证。", style = MaterialTheme.typography.bodySmall)
+            Text("可切换到后台或锁屏；划掉 App 会停止本次认证。", style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
             OutlinedButton(onClick = model::cancelLogin, modifier = Modifier.testTag("cancel_login")) { Text("取消认证") }
         }
         LoginDiagnostics(state.login)
@@ -258,34 +322,36 @@ internal fun NetworkPanel(state: AppUiState, model: AppViewModel) {
             OutlinedButton(onClick = { model.updateSettings(state.data.settings.copy(networkMode = NetworkMode.PUBLIC_WIFI)) }, enabled = !state.busy) { Text("公共 WiFi") }
             OutlinedButton(onClick = { model.updateSettings(state.data.settings.copy(networkMode = NetworkMode.DORM_WIFI)) }, enabled = !state.busy) { Text("宿舍 WiFi") }
         }
-        Button(onClick = model::login, enabled = !state.busy && !state.login.running,
-            modifier = Modifier.fillMaxWidth().testTag("login_button")) {
-            Text(when { state.login.running -> "正在认证…"; state.login.completed -> "检查联网状态"; else -> "登录 / 重试" })
-        }
+        CtaButton(when { state.login.running -> "正在认证…"; state.login.completed -> "检查联网状态"; else -> "登录 / 重试" },
+            model::login, Modifier.testTag("login_button"), enabled = !state.busy && !state.login.running)
     }
 }
 
 @Composable
 internal fun AccountSelector(state: AppUiState, onSelect: (String) -> Unit, onAdd: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
+    val palette = gxz
     Box(Modifier.fillMaxWidth()) {
-        OutlinedButton(onClick = { expanded = true }, enabled = !state.busy,
-            shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().testTag("account_selector")) {
-            Column(Modifier.weight(1f).padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth().glass(palette, TileShape).clickable(enabled = !state.busy, role = Role.Button) { expanded = true }
+            .testTag("account_selector").padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            GlyphChip(AppGlyph.PERSON)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(state.data.defaultAccount?.label ?: "选择 / 添加校园网账号", style = MaterialTheme.typography.titleMedium)
-                state.data.defaultAccount?.let { Text(maskUsername(it.username), style = MaterialTheme.typography.bodySmall) }
+                state.data.defaultAccount?.let { Text(maskUsername(it.username), style = MaterialTheme.typography.bodySmall,
+                    color = palette.inkSoft, fontFamily = FontFamily.Monospace) }
             }
-            Text("⌄", style = MaterialTheme.typography.titleLarge)
+            LineGlyph(AppGlyph.CHEVRON, Modifier.size(16.dp).rotate(90f), palette.inkFaint)
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(16.dp)) {
             state.data.accounts.forEach { account ->
                 DropdownMenuItem(text = { Column {
                     Text(account.label + if (account.id == state.data.defaultAccountId) " · 当前" else "")
-                    Text(maskUsername(account.username), style = MaterialTheme.typography.bodySmall)
+                    Text(maskUsername(account.username), style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
                 } }, onClick = { expanded = false; if (account.id != state.data.defaultAccountId) onSelect(account.id) },
                     modifier = Modifier.testTag("select_account_${account.id}"))
             }
-            if (state.data.accounts.isNotEmpty()) HorizontalDivider()
+            if (state.data.accounts.isNotEmpty()) HorizontalDivider(color = palette.hairline)
             DropdownMenuItem(text = { Text("添加账号") }, onClick = { expanded = false; onAdd() })
         }
     }
@@ -294,32 +360,39 @@ internal fun AccountSelector(state: AppUiState, onSelect: (String) -> Unit, onAd
 @Composable
 internal fun Accounts(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onEdit: (String) -> Unit,
     onDefault: (String) -> Unit, onDelete: (AccountSummary) -> Unit) {
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    val palette = gxz
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { AccountSelector(state, onDefault, onAdd) }
-        item { Text("已保存 ${state.data.accounts.size} 个账号", style = MaterialTheme.typography.bodySmall) }
-        item { Button(onClick = onAdd, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("添加账号") } }
+        item { CtaButton("添加账号", onAdd, enabled = !state.busy) }
+        item { Text("已保存 ${state.data.accounts.size} 个账号", Modifier.padding(start = 8.dp, top = 6.dp),
+            style = MaterialTheme.typography.labelMedium, color = palette.inkFaint) }
         if (state.data.accounts.isEmpty()) item {
-            Panel { Text("还没有账号", style = MaterialTheme.typography.titleLarge); Text("添加校园网账号和密码，后续自动登录将使用默认账号。") }
+            GlassCard {
+                Text("还没有账号", style = MaterialTheme.typography.titleLarge)
+                Text("添加校园网账号和密码，后续自动登录将使用默认账号。", style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
+            }
         }
         items(state.data.accounts, key = { it.id }) { account ->
-            Panel {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            // Added, removed and re-ordered accounts glide instead of jumping.
+            GlassCard(Modifier.animateItem(fadeInSpec = tween(Motion.MEDIUM), placementSpec = Motion.snappy(),
+                fadeOutSpec = tween(Motion.SHORT)), padding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 8.dp), spacing = 6.dp) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(account.label, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                    if (account.id == state.data.defaultAccountId) {
-                        Text("默认", color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 5.dp))
-                    }
+                    if (account.id == state.data.defaultAccountId) Pill("默认")
                 }
-                Text(maskUsername(account.username), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("密码已加密保存", style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(maskUsername(account.username), color = palette.inkSoft, style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace)
+                Text("密码已加密保存", style = MaterialTheme.typography.bodySmall, color = palette.inkFaint)
+                Row(Modifier.offset(x = (-12).dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     TextButton(onClick = { onEdit(account.id) }, enabled = !state.busy) { Text("编辑") }
                     TextButton(onClick = { onDefault(account.id) }, enabled = !state.busy && account.id != state.data.defaultAccountId) { Text("设为默认") }
                     TextButton(onClick = { onDelete(account) }, enabled = !state.busy) { Text("删除", color = MaterialTheme.colorScheme.error) }
                 }
             }
         }
-        item { Text("切换默认账号不会退出当前网络会话。", style = MaterialTheme.typography.bodySmall) }
+        item { Text("切换默认账号不会退出当前网络会话。", Modifier.padding(horizontal = 8.dp),
+            style = MaterialTheme.typography.bodySmall, color = palette.inkFaint) }
     }
 }
 
@@ -358,7 +431,7 @@ private fun AccountEditor(draft: AccountDraft, busy: Boolean, error: String?, on
         },
         confirmButton = { TextButton(enabled = !busy && username.isNotBlank() && password.isNotEmpty(),
             onClick = { onSave(AccountDraft(draft.id, label, username, password)) }) {
-            if (busy) CircularProgressIndicator(Modifier.size(18.dp)) else Text("保存")
+            if (busy) BrandLoader(Modifier.size(22.dp)) else Text("保存")
         } },
         dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("取消") } },
     )

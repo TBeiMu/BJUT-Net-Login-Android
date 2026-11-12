@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from the geometry of ui/Brand.kt: 工 as three tiles; the vermilion stem is "now". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.7" android:scaleY="0.7">
+        <group android:name="card0" android:pivotX="38.25" android:pivotY="32.75"
+            android:scaleX="0" android:scaleY="0" android:translateX="-5.95" android:translateY="3.45">
+            <path android:name="card0_fill" android:fillColor="@color/logo_ink" android:fillAlpha="0.28" android:pathData="M35.2,27h6.1a2.2,2.2 0,0 1,2.2,2.2v7.1a2.2,2.2 0,0 1,-2.2,2.2h-6.1a2.2,2.2 0,0 1,-2.2,-2.2v-7.1a2.2,2.2 0,0 1,2.2,-2.2z" />
+        </group>
+        <group android:name="card1" android:pivotX="48.75" android:pivotY="32.75"
+            android:scaleX="0" android:scaleY="0" android:translateX="-5.85" android:translateY="8.95">
+            <path android:name="card1_fill" android:fillColor="@color/logo_ink" android:fillAlpha="0.28" android:pathData="M45.7,27h6.1a2.2,2.2 0,0 1,2.2,2.2v7.1a2.2,2.2 0,0 1,-2.2,2.2h-6.1a2.2,2.2 0,0 1,-2.2,-2.2v-7.1a2.2,2.2 0,0 1,2.2,-2.2z" />
+        </group>
+        <group android:name="card2" android:pivotX="59.25" android:pivotY="32.75"
+            android:scaleX="0" android:scaleY="0" android:translateX="4.85" android:translateY="-2.05">
+            <path android:name="card2_fill" android:fillColor="@color/logo_ink" android:fillAlpha="0.28" android:pathData="M56.2,27h6.1a2.2,2.2 0,0 1,2.2,2.2v7.1a2.2,2.2 0,0 1,-2.2,2.2h-6.1a2.2,2.2 0,0 1,-2.2,-2.2v-7.1a2.2,2.2 0,0 1,2.2,-2.2z" />
+        </group>
+        <group android:name="card3" android:pivotX="69.75" android:pivotY="32.75"
+            android:scaleX="0" android:scaleY="0" android:translateX="4.95" android:translateY="14.45">
+            <path android:name="card3_fill" android:fillColor="@color/logo_ink" android:fillAlpha="0.28" android:pathData="M66.7,27h6.1a2.2,2.2 0,0 1,2.2,2.2v7.1a2.2,2.2 0,0 1,-2.2,2.2h-6.1a2.2,2.2 0,0 1,-2.2,-2.2v-7.1a2.2,2.2 0,0 1,2.2,-2.2z" />
+        </group>
+        <group android:name="card4" android:pivotX="54" android:pivotY="54"
+            android:scaleX="0" android:scaleY="0" android:translateX="-0.5" android:translateY="-6.8">
+            <path android:name="card4_fill" android:fillColor="@color/logo_red" android:fillAlpha="1" android:pathData="M52,41.5h4a4,4 0,0 1,4,4v17a4,4 0,0 1,-4,4h-4a4,4 0,0 1,-4,-4v-17a4,4 0,0 1,4,-4z" />
+        </group>
+        <group android:name="card5" android:pivotX="32.4" android:pivotY="75.25"
+            android:scaleX="0" android:scaleY="0" android:translateX="-0.1" android:translateY="-11.55">
+            <path android:name="card5_fill" android:fillColor="@color/logo_ink" android:fillAlpha="0.28" android:pathData="M29.2,69.5h6.4a2.2,2.2 0,0 1,2.2,2.2v7.1a2.2,2.2 0,0 1,-2.2,2.2h-6.4a2.2,2.2 0,0 1,-2.2,-2.2v-7.1a2.2,2.2 0,0 1,2.2,-2.2z" />
+        </group>
+        <group android:name="card6" android:pivotX="43.2" android:pivotY="75.25"
+            android:scaleX="0" android:scaleY="0" android:translateX="-0.3" android:translateY="-6.05">
+            <path android:name="card6_fill" android:fillColor="@color/logo_ink" android:fillAlpha="0.28" android:pathData="M40,69.5h6.4a2.2,2.2 0,0 1,2.2,2.2v7.1a2.2,2.2 0,0 1,-2.2,2.2h-6.4a2.2,2.2 0,0 1,-2.2,-2.2v-7.1a2.2,2.2 0,0 1,2.2,-2.2z" />
+        </group>
+        <group android:name="card7" android:pivotX="54" android:pivotY="75.25"
+            android:scaleX="0" android:scaleY="0" android:translateX="-0.5" android:translateY="-0.55">
+            <path android:name="card7_fill" android:fillColor="@color/logo_ink" android:fillAlpha="0.28" android:pathData="M50.8,69.5h6.4a2.2,2.2 0,0 1,2.2,2.2v7.1a2.2,2.2 0,0 1,-2.2,2.2h-6.4a2.2,2.2 0,0 1,-2.2,-2.2v-7.1a2.2,2.2 0,0 1,2.2,-2.2z" />
+        </group>
+        <group android:name="card8" android:pivotX="64.8" android:pivotY="75.25"
+            android:scaleX="0" android:scaleY="0" android:translateX="-0.7" android:translateY="-17.05">
+            <path android:name="card8_fill" android:fillColor="@color/logo_ink" android:fillAlpha="0.28" android:pathData="M61.6,69.5h6.4a2.2,2.2 0,0 1,2.2,2.2v7.1a2.2,2.2 0,0 1,-2.2,2.2h-6.4a2.2,2.2 0,0 1,-2.2,-2.2v-7.1a2.2,2.2 0,0 1,2.2,-2.2z" />
+        </group>
+        <group android:name="card9" android:pivotX="75.6" android:pivotY="75.25"
+            android:scaleX="0" android:scaleY="0" android:translateX="-0.9" android:translateY="-0.55">
+            <path android:name="card9_fill" android:fillColor="@color/logo_ink" android:fillAlpha="0.28" android:pathData="M72.4,69.5h6.4a2.2,2.2 0,0 1,2.2,2.2v7.1a2.2,2.2 0,0 1,-2.2,2.2h-6.4a2.2,2.2 0,0 1,-2.2,-2.2v-7.1a2.2,2.2 0,0 1,2.2,-2.2z" />
+        </group>
+        <path android:name="bars" android:fillColor="@color/logo_ink" android:fillAlpha="0" android:pathData="M37,27h34a4,4 0,0 1,4,4v3.5a4,4 0,0 1,-4,4h-34a4,4 0,0 1,-4,-4v-3.5a4,4 0,0 1,4,-4zM31,69.5h46a4,4 0,0 1,4,4v3.5a4,4 0,0 1,-4,4h-46a4,4 0,0 1,-4,-4v-3.5a4,4 0,0 1,4,-4z" />
+    </group>
+</vector>

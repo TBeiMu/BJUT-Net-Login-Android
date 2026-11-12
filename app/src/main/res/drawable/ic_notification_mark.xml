@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from the geometry of ui/Brand.kt: 工 as three tiles; the vermilion stem is "now". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M5.722,2h12.556a1.5,1.5 0,0 1,1.5,1.5v1.259a1.5,1.5 0,0 1,-1.5,1.5h-12.556a1.5,1.5 0,0 1,-1.5,-1.5v-1.259a1.5,1.5 0,0 1,1.5,-1.5zM11.278,7.37h1.444a1.5,1.5 0,0 1,1.5,1.5v6.259a1.5,1.5 0,0 1,-1.5,1.5h-1.444a1.5,1.5 0,0 1,-1.5,-1.5v-6.259a1.5,1.5 0,0 1,1.5,-1.5zM3.5,17.741h17a1.5,1.5 0,0 1,1.5,1.5v1.259a1.5,1.5 0,0 1,-1.5,1.5h-17a1.5,1.5 0,0 1,-1.5,-1.5v-1.259a1.5,1.5 0,0 1,1.5,-1.5z" />
+</vector>

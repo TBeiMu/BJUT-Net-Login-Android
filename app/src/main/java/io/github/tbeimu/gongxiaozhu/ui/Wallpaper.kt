@@ -8,6 +8,8 @@ import android.os.Looper
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,7 +30,7 @@ import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -195,47 +197,73 @@ private fun WallpaperColors?.toPalette(): List<Color>? = this?.let {
     listOfNotNull(primaryColor, secondaryColor, tertiaryColor).map { color -> Color(color.toArgb()) }
 }
 
+/**
+ * The page behind everything. Paper, not a poster: each preset is only a tint of near-white, so
+ * the white cards on it stay crisp and nothing looks hazy. Dark presets are near-neutral charcoal.
+ */
 internal fun wallpaperPresetColors(preset: WallpaperPreset, dark: Boolean): List<Color> {
     val light = when (preset) {
-        WallpaperPreset.BLUE_CYAN -> listOf(0xFFA9CDF4, 0xFFD0EAF0, 0xFFE5E8FA)
-        WallpaperPreset.MINT -> listOf(0xFFA8DCCB, 0xFFD3EDE2, 0xFFE6F0ED)
-        WallpaperPreset.LAVENDER -> listOf(0xFFC8B7E7, 0xFFE4DAF2, 0xFFE8E7F5)
-        WallpaperPreset.PINK -> listOf(0xFFE8B9CF, 0xFFF4DFE7, 0xFFF0E8F1)
-        WallpaperPreset.APRICOT -> listOf(0xFFE8C29E, 0xFFF3E2CD, 0xFFF5EBDF)
-        WallpaperPreset.GRAY -> listOf(0xFFC5CFD8, 0xFFE2E7EB, 0xFFF0F2F5)
+        WallpaperPreset.BLUE_CYAN -> listOf(0xFFF1F4F7, 0xFFF8F8F7, 0xFFFBFAF8)
+        WallpaperPreset.MINT -> listOf(0xFFE8F2EE, 0xFFF0F5F2, 0xFFF4F6F4)
+        WallpaperPreset.LAVENDER -> listOf(0xFFEEEBF6, 0xFFF3F2F8, 0xFFF5F4F8)
+        WallpaperPreset.PINK -> listOf(0xFFF6EBEF, 0xFFF8F2F3, 0xFFF7F4F4)
+        WallpaperPreset.APRICOT -> listOf(0xFFF6EEE4, 0xFFF8F4EE, 0xFFF7F5F1)
+        WallpaperPreset.GRAY -> listOf(0xFFEDEEEF, 0xFFF3F3F3, 0xFFF5F5F4)
     }.map { Color(it) }
     if (!dark) return light
-    if (preset == WallpaperPreset.BLUE_CYAN) return listOf(Color(0xFF122A43), Color(0xFF173C4D), Color(0xFF182839))
-    return light.map { lerp(it, Color(0xFF081523), .82f) }
+    return wallpaperPresetSwatch(preset).map { lerp(it, Color(0xFF0F1115), .9f) }
 }
+
+/** The preset's own colour, as shown on its swatch in 外观设置: the hue the paper is tinted with. */
+internal fun wallpaperPresetSwatch(preset: WallpaperPreset): List<Color> = when (preset) {
+    WallpaperPreset.BLUE_CYAN -> listOf(0xFFA9CDF4, 0xFFD0EAF0, 0xFFE5E8FA)
+    WallpaperPreset.MINT -> listOf(0xFFA8DCCB, 0xFFD3EDE2, 0xFFE6F0ED)
+    WallpaperPreset.LAVENDER -> listOf(0xFFC8B7E7, 0xFFE4DAF2, 0xFFE8E7F5)
+    WallpaperPreset.PINK -> listOf(0xFFE8B9CF, 0xFFF4DFE7, 0xFFF0E8F1)
+    WallpaperPreset.APRICOT -> listOf(0xFFE8C29E, 0xFFF3E2CD, 0xFFF5EBDF)
+    WallpaperPreset.GRAY -> listOf(0xFFC5CFD8, 0xFFE2E7EB, 0xFFF0F2F5)
+}.map { Color(it) }
 
 @Composable
 internal fun WallpaperBackground(wallpaper: WallpaperState, modifier: Modifier = Modifier) {
     val dark = isSystemInDarkTheme()
     val preferences = wallpaper.preferences
-    val colors = if (preferences.mode == WallpaperMode.SYSTEM_COLORS && !wallpaper.systemColors.isNullOrEmpty()) {
+    val targetColors = if (preferences.mode == WallpaperMode.SYSTEM_COLORS && !wallpaper.systemColors.isNullOrEmpty()) {
         val source = wallpaper.systemColors!!
+        // Wallpaper colours tint the paper the same way the presets do: a breath, not a wash.
         List(3) { index -> lerp(source.getOrElse(index) { source.last() },
-            if (dark) Color(0xFF081523) else Color.White, if (dark) .78f else .55f) }
+            if (dark) Color(0xFF0F1115) else Color(0xFFF5F5F5), if (dark) .88f else .86f + index * .03f) }
     } else wallpaperPresetColors(if (preferences.mode == WallpaperMode.PRESET) preferences.preset else WallpaperPreset.BLUE_CYAN, dark)
     val radius = with(LocalDensity.current) { preferences.photoBlurDp.dp.toPx() }
+    // A new background washes over the old one instead of switching: the whole app changes light together.
+    val wash = tween<Color>(900, easing = Motion.Emphasized)
+    val colors = targetColors.mapIndexed { index, color -> animateColorAsState(color, wash, label = "背景色$index").value }
     Box(modifier.background(Brush.verticalGradient(colors))) {
         val photo = wallpaper.image.takeIf { preferences.mode == WallpaperMode.PHOTO }
-        if (photo != null) Image(photo, contentDescription = null,
-            modifier = Modifier.fillMaxSize().graphicsLayer {
-                renderEffect = if (radius > 0f) BlurEffect(radius, radius, TileMode.Clamp) else null
-            }, contentScale = ContentScale.Crop)
-        else Canvas(Modifier.fillMaxSize()) {
-            val wave = Path().apply {
-                moveTo(0f, size.height * .7f)
-                cubicTo(size.width * .35f, size.height * .44f, size.width * .8f, size.height * .95f, size.width, size.height * .66f)
-                lineTo(size.width, size.height); lineTo(0f, size.height); close()
-            }
-            drawPath(wave, Color.White.copy(alpha = if (dark) .03f else .18f))
+        if (photo != null) {
+            Image(photo, contentDescription = null,
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    renderEffect = if (radius > 0f) BlurEffect(radius, radius, TileMode.Clamp) else null
+                }, contentScale = ContentScale.Crop)
+            // A photo needs a firmer veil than a gradient to keep ink legible.
+            Box(Modifier.fillMaxSize().background(if (dark) Color(0xFF0F1115).copy(alpha = .62f) else Color(0xFFF5F5F5).copy(alpha = .5f)))
+        } else Canvas(Modifier.fillMaxSize()) {
+            // A single, barely-there pool of the preset's tint at the top: light, not decoration.
+            drawRect(Brush.radialGradient(listOf(colors[0].copy(alpha = if (dark) .5f else .9f), colors[0].copy(alpha = 0f)),
+                Offset(size.width * .2f, 0f), maxOf(size.width, size.height * .5f)))
         }
-        Box(Modifier.fillMaxSize().background(if (dark) Color(0xFF081523).copy(alpha = .65f) else Color.White.copy(alpha = .48f)))
     }
 }
+
+/** A warm or cool counter-light for each preset; only painted, never stored. */
+internal fun wallpaperPresetBloom(preset: WallpaperPreset): Color = Color(when (preset) {
+    WallpaperPreset.BLUE_CYAN -> 0xFFFFD9C4
+    WallpaperPreset.MINT -> 0xFFFFF0B8
+    WallpaperPreset.LAVENDER -> 0xFFFFCFE0
+    WallpaperPreset.PINK -> 0xFFFFDDB5
+    WallpaperPreset.APRICOT -> 0xFFFFC7CF
+    WallpaperPreset.GRAY -> 0xFFCFE0F5
+})
 
 @Composable
 internal fun AppBackdrop(wallpaper: WallpaperState, content: @Composable () -> Unit) {
