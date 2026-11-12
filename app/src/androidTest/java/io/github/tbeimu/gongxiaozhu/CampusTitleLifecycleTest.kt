@@ -115,10 +115,10 @@ class CampusTitleLifecycleTest {
         compose.onNodeWithTag("schedule_week_title").assertTextContains("第 1 周")
     }
 
-    @Test fun threeSecondTimeoutDisappearsAfterOneSecondAndAuthenticationContinues() {
+    @Test fun threeAndAHalfSecondTimeoutDisappearsAfterOneSecondAndAuthenticationContinues() {
         val runtime = start()
         val original = compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot
-        // Rotating during CONNECTING must not restart the three-second wait deadline.
+        // Rotating during CONNECTING must not restart the 3.5-second wait deadline.
         compose.activityRule.scenario.recreate()
         val events = java.util.Collections.synchronizedList(mutableListOf<Pair<CampusTitlePhase?, Long>>())
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)

@@ -125,7 +125,7 @@ class ScheduleInteractionTest {
         } finally { testScope.backgroundScope.cancel() }
     }
 
-    @Test fun threeSecondWaitUsesOnlyOneSecondTimeoutWithoutMovingGridAndLateSuccessWorks() {
+    @Test fun threeAndAHalfSecondWaitUsesOnlyOneSecondTimeoutWithoutMovingGridAndLateSuccessWorks() {
         val testScope = TestScope()
         val notice = CampusConnectionNotice(testScope.backgroundScope)
         val running = LoginUiState(running = true, wifiConnected = true, taskId = "fake-slow-task")
@@ -135,7 +135,7 @@ class ScheduleInteractionTest {
             } }
             val original = compose.onNodeWithTag("week_grid_1").fetchSemanticsNode().boundsInRoot
             compose.runOnUiThread { notice.update(running) }; testScope.runCurrent()
-            testScope.advanceTimeBy(2999); testScope.runCurrent(); compose.waitForIdle()
+            testScope.advanceTimeBy(3499); testScope.runCurrent(); compose.waitForIdle()
             compose.onNodeWithTag("schedule_week_title").assertTextContains("正在登录校园网")
             testScope.advanceTimeBy(1); testScope.runCurrent(); compose.waitForIdle()
             compose.onNodeWithTag("schedule_week_title").assertTextContains("登录超时")
@@ -145,7 +145,7 @@ class ScheduleInteractionTest {
             compose.runOnUiThread { notice.update(running.copy(running = false, completed = true)) }
             testScope.runCurrent(); compose.onNodeWithTag("schedule_week_title").assertTextContains("校园网已连接")
             compose.runOnUiThread { notice.update(running.copy(taskId = "fake-failure-task")) }
-            testScope.runCurrent(); testScope.advanceTimeBy(3000); testScope.runCurrent(); compose.waitForIdle()
+            testScope.runCurrent(); testScope.advanceTimeBy(3500); testScope.runCurrent(); compose.waitForIdle()
             compose.runOnUiThread { notice.update(running.copy(taskId = "fake-failure-task", running = false,
                 outcome = LoginTaskOutcome.FAILED)) }
             testScope.runCurrent(); compose.onNodeWithTag("schedule_week_title").assertTextContains("登录超时")

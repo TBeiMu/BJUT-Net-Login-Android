@@ -27,6 +27,7 @@ data class LoginUiState(
     val taskId: String? = null,
     val diagnostics: List<LoginDiagnostic> = emptyList(),
     val outcome: LoginTaskOutcome? = null,
+    val wifiSnapshotKnown: Boolean = false,
 )
 
 /** Main-thread state machine. The service owns execution, never an Activity or ViewModel. */
@@ -81,13 +82,20 @@ class CampusLoginController(
     }
 
     fun wifiChanged(connection: WifiConnection?) {
+        val firstSnapshot = !hasWifiSnapshot
         val changed = wifi?.key != connection?.key
         hasWifiSnapshot = true
         wifi = connection
-        if (changed) {
+        if (changed || firstSnapshot) {
             val message = if (connection == null) "未连接 WiFi，请先连接校园 WiFi" else "WiFi 已变化，请检查认证状态"
-            if (attempt != null) cancel(message = message)
-            else mutable.value = LoginUiState(message = message, wifiConnected = connection != null)
+            if (attempt != null && changed) {
+                cancel(message = message)
+                mutable.value = state.value.copy(wifiConnected = connection != null, wifiSnapshotKnown = true)
+            }
+            else if (attempt != null) mutable.value = state.value.copy(wifiSnapshotKnown = true)
+            else if (changed || state.value.taskId == null) mutable.value = LoginUiState(
+                message = message, wifiConnected = connection != null, wifiSnapshotKnown = true)
+            else mutable.value = state.value.copy(wifiSnapshotKnown = true)
         }
         maybeAutomatic()
     }
@@ -95,19 +103,20 @@ class CampusLoginController(
     private fun maybeAutomatic() {
         if (!foreground || !ready || !hasWifiSnapshot || attempted || job != null) return
         attempted = true
-        if (automatic) login()
+        if (automatic && wifi != null) login()
     }
 
     fun login() {
         if (!foreground || !ready || !hasWifiSnapshot || job != null || serviceOwner != null) return
         attempted = true
         val selected = wifi ?: run {
-            mutable.value = LoginUiState(message = "未连接 WiFi，请先连接校园 WiFi")
+            mutable.value = LoginUiState(message = "未连接 WiFi，请先连接校园 WiFi", wifiSnapshotKnown = true)
             return
         }
         val current = Attempt(UUID.randomUUID().toString(), selected, accountId, mode)
         attempt = current
-        mutable.value = LoginUiState(true, "正在启动认证，可切换到后台…", true, taskId = current.id)
+        mutable.value = LoginUiState(true, "正在启动认证，可切换到后台…", true,
+            taskId = current.id, wifiSnapshotKnown = true)
         job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 withTimeout(LOGIN_TASK_TIMEOUT_MS) {

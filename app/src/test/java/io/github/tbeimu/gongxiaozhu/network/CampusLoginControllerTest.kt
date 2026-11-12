@@ -44,6 +44,37 @@ class CampusLoginControllerTest {
         f.start(); runCurrent(); assertEquals(1, calls)
     }
 
+    @Test fun confirmedNoWifiNeverStartsServiceReadsCredentialsOrAuthenticates() = runTest {
+        var calls = 0; var reads = 0
+        val f = Fixture(backgroundScope, CampusAuthenticator { _, _, _, _ -> calls++; error("must not authenticate") },
+            credentials = { reads++; null })
+        val notice = CampusConnectionNotice(backgroundScope)
+        notice.setVisible(true)
+        backgroundScope.launch { f.controller.state.collect(notice::update) }
+        f.controller.enterForeground(); f.controller.configure(true, true, NetworkMode.AUTO, "demo")
+        runCurrent(); assertNull(notice.state.value)
+        f.controller.wifiChanged(null); runCurrent()
+        assertEquals(CampusTitlePhase.NO_WIFI, notice.state.value?.phase)
+        repeat(3) { f.controller.login() }; runCurrent()
+        assertTrue(f.starts.isEmpty()); assertEquals(0, calls); assertEquals(0, reads)
+        assertTrue(f.controller.state.value.wifiSnapshotKnown)
+        assertFalse(f.controller.state.value.running)
+    }
+
+    @Test fun sameWifiSnapshotDoesNotCancelRunningTaskButDisconnectImmediatelyClearsTitle() = runTest {
+        val f = Fixture(backgroundScope, CampusAuthenticator { _, _, _, _ -> awaitCancellation() })
+        val notice = CampusConnectionNotice(backgroundScope)
+        notice.setVisible(true)
+        backgroundScope.launch { f.controller.state.collect(notice::update) }
+        f.ready(wifi); f.start(); runCurrent()
+        f.controller.awaitWifiSnapshot(); f.controller.wifiChanged(wifi); runCurrent()
+        assertTrue(f.controller.state.value.running)
+        assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
+        f.controller.wifiChanged(null); runCurrent()
+        assertEquals(CampusTitlePhase.NO_WIFI, notice.state.value?.phase)
+        assertEquals(1, f.starts.size)
+    }
+
     @Test fun backgroundAndReturnReuseRunningAttemptWithoutSecondSubmission() = runTest {
         var calls = 0
         val result = CompletableDeferred<LoginResult>()
@@ -183,7 +214,7 @@ class CampusLoginControllerTest {
         notice.setVisible(true)
         backgroundScope.launch { f.controller.state.collect { notice.update(it) } }
         f.ready(wifi); f.start(); runCurrent()
-        advanceTimeBy(3000); runCurrent()
+        advanceTimeBy(CAMPUS_TITLE_WAIT_MS); runCurrent()
         assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         assertTrue(f.controller.state.value.running); assertEquals(1, calls)
         advanceTimeBy(2500); runCurrent()
@@ -201,12 +232,12 @@ class CampusLoginControllerTest {
         notice.setVisible(true)
         backgroundScope.launch { f.controller.state.collect { notice.update(it) } }
         f.ready(wifi); f.start(); runCurrent()
-        advanceTimeBy(3000); runCurrent()
+        advanceTimeBy(CAMPUS_TITLE_WAIT_MS); runCurrent()
         assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         assertTrue(f.controller.state.value.running); assertNull(f.controller.state.value.outcome)
         advanceTimeBy(1000); runCurrent(); assertNull(notice.state.value)
         assertTrue(f.controller.state.value.running); assertNull(f.controller.state.value.outcome)
-        advanceTimeBy(70_999); runCurrent()
+        advanceTimeBy(LOGIN_TASK_TIMEOUT_MS - CAMPUS_TITLE_WAIT_MS - CAMPUS_WARNING_DURATION_MS - 1); runCurrent()
         assertTrue(f.controller.state.value.running)
         assertNull(notice.state.value)
         advanceTimeBy(1); runCurrent()

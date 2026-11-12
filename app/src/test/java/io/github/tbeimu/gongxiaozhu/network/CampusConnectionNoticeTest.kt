@@ -69,11 +69,11 @@ class CampusConnectionNoticeTest {
         notice.update(success.copy(wifiConnected = false));assertNull(notice.state.value)
     }
 
-    @Test fun timeoutStartsAtThreeSecondsAndOnlyLastsOneSecondWhileTaskRuns() = runTest {
+    @Test fun timeoutStartsAtThreeAndAHalfSecondsAndOnlyLastsOneSecondWhileTaskRuns() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
         notice.setVisible(true); notice.update(running); runCurrent()
         advanceTimeBy(1500); notice.update(running.copy(message = "虚构进度")); runCurrent()
-        advanceTimeBy(1499); runCurrent(); assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
+        advanceTimeBy(1999); runCurrent(); assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
         advanceTimeBy(1); runCurrent(); assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         advanceTimeBy(999); runCurrent(); assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         advanceTimeBy(1); runCurrent(); assertNull(notice.state.value)
@@ -82,7 +82,7 @@ class CampusConnectionNoticeTest {
 
     @Test fun failureDuringTimeoutDoesNotExtendItOrDisplayAnotherTitle() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
-        notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(3000); runCurrent()
+        notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(3500); runCurrent()
         advanceTimeBy(400); notice.update(running.copy(running = false, outcome = LoginTaskOutcome.FAILED)); runCurrent()
         advanceTimeBy(599); runCurrent(); assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         advanceTimeBy(1); runCurrent(); assertNull(notice.state.value)
@@ -96,19 +96,19 @@ class CampusConnectionNoticeTest {
         advanceTimeBy(5000); runCurrent(); assertNull(notice.state.value)
     }
 
-    @Test fun successBeforeThreeSecondsHasNoTimeout() = runTest {
+    @Test fun successBeforeThreeAndAHalfSecondsHasNoTimeout() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
-        notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(2999); runCurrent()
+        notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(3499); runCurrent()
         assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
         notice.update(success); runCurrent(); advanceTimeBy(1); runCurrent()
         assertEquals(CampusTitlePhase.CONNECTED, notice.state.value?.phase)
     }
 
     @Test fun successDuringTimeoutOrAfterWeekStillAppearsOnceForTwoSeconds() = runTest {
-        for (finishedAt in listOf(3300L, 5000L)) {
+        for (finishedAt in listOf(3800L, 5000L)) {
             val notice = CampusConnectionNotice(backgroundScope)
             notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(finishedAt); runCurrent()
-            if (finishedAt == 3300L) assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+            if (finishedAt == 3800L) assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
             else assertNull(notice.state.value)
             notice.update(success); runCurrent(); assertEquals(CampusTitlePhase.CONNECTED, notice.state.value?.phase)
             advanceTimeBy(1999); runCurrent(); assertEquals(CampusTitlePhase.CONNECTED, notice.state.value?.phase)
@@ -128,7 +128,7 @@ class CampusConnectionNoticeTest {
 
     @Test fun backgroundTimeoutWaitsForFreshWifiAndVisiblePageBeforeExpiring() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
-        notice.update(running); runCurrent(); advanceTimeBy(3000); runCurrent(); notice.suspendObservation()
+        notice.update(running); runCurrent(); advanceTimeBy(3500); runCurrent(); notice.suspendObservation()
         val failed = running.copy(running = false, outcome = LoginTaskOutcome.FAILED)
         notice.update(failed); notice.setVisible(true); assertNull(notice.state.value)
         notice.setVisible(false); notice.resumeObservation(failed); advanceTimeBy(5000); runCurrent()
@@ -140,7 +140,7 @@ class CampusConnectionNoticeTest {
         val notice = CampusConnectionNotice(backgroundScope)
         notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(2500)
         notice.setVisible(false); notice.setVisible(true); notice.update(running); runCurrent()
-        advanceTimeBy(500); runCurrent(); assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        advanceTimeBy(1000); runCurrent(); assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
         advanceTimeBy(400); notice.setVisible(false); notice.setVisible(true); notice.update(running); runCurrent()
         advanceTimeBy(600); runCurrent(); assertNull(notice.state.value)
         notice.update(running); notice.setVisible(false); notice.setVisible(true); assertNull(notice.state.value)
@@ -148,7 +148,7 @@ class CampusConnectionNoticeTest {
 
     @Test fun newTaskCancellationOrWifiChangeDropsTimeoutAndItsOldTimer() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
-        notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(3000); runCurrent()
+        notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(3500); runCurrent()
         advanceTimeBy(400); notice.update(running.copy(taskId = "next")); runCurrent()
         advanceTimeBy(600); runCurrent(); assertEquals(CampusTitleNotice("next", CampusTitlePhase.CONNECTING), notice.state.value)
         notice.update(running.copy(taskId = "next", outcome = LoginTaskOutcome.CANCELLED)); runCurrent()
@@ -158,8 +158,62 @@ class CampusConnectionNoticeTest {
 
     @Test fun needForManualModeSelectionDoesNotBecomeTimeout() = runTest {
         val notice = CampusConnectionNotice(backgroundScope)
-        notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(3000); runCurrent()
+        notice.setVisible(true); notice.update(running); runCurrent(); advanceTimeBy(3500); runCurrent()
         notice.update(running.copy(running = false, needsChoice = true, outcome = LoginTaskOutcome.NEEDS_CHOICE))
         assertNull(notice.state.value)
+    }
+
+    @Test fun unknownSnapshotNeverClaimsNoWifiAndConfirmedAbsenceShowsOnlyOnce() = runTest {
+        val notice = CampusConnectionNotice(backgroundScope)
+        notice.setVisible(true)
+        notice.update(LoginUiState()); assertNull(notice.state.value)
+        val disconnected = LoginUiState(wifiSnapshotKnown = true)
+        notice.update(disconnected); runCurrent()
+        assertEquals(CampusTitlePhase.NO_WIFI, notice.state.value?.phase)
+        val id = notice.state.value!!.taskId
+        advanceTimeBy(500); notice.update(disconnected); notice.setVisible(false); notice.setVisible(true)
+        assertEquals(id, notice.state.value?.taskId)
+        advanceTimeBy(500); runCurrent(); assertNull(notice.state.value)
+        notice.update(disconnected); advanceTimeBy(5000); runCurrent(); assertNull(notice.state.value)
+        notice.suspendObservation(); assertNull(notice.state.value)
+        notice.resumeObservation(disconnected)
+        assertEquals(CampusTitlePhase.NO_WIFI, notice.state.value?.phase)
+        assertNotEquals(id, notice.state.value?.taskId)
+    }
+
+    @Test fun noWifiTimerCannotEraseWifiTaskAndDisconnectDropsOldSuccess() = runTest {
+        val notice = CampusConnectionNotice(backgroundScope)
+        notice.setVisible(true); notice.update(LoginUiState(wifiSnapshotKnown = true)); runCurrent()
+        advanceTimeBy(500); notice.update(running); runCurrent()
+        advanceTimeBy(500); runCurrent(); assertEquals(CampusTitlePhase.CONNECTING, notice.state.value?.phase)
+        notice.update(success); runCurrent()
+        notice.update(LoginUiState(wifiSnapshotKnown = true))
+        assertEquals(CampusTitlePhase.NO_WIFI, notice.state.value?.phase)
+        advanceTimeBy(1000); runCurrent(); assertNull(notice.state.value)
+    }
+
+    @Test fun successWhileStillCleaningUpCancelsWaitAndRejectsQueuedProgress() = runTest {
+        val notice = CampusConnectionNotice(backgroundScope)
+        val phases = mutableListOf<CampusTitlePhase?>()
+        notice.setVisible(true); notice.update(running); runCurrent()
+        advanceTimeBy(3499); runCurrent()
+        notice.update(running.copy(completed = true, outcome = LoginTaskOutcome.SUCCESS)); runCurrent()
+        phases += notice.state.value?.phase
+        notice.update(running); runCurrent()
+        advanceTimeBy(1); runCurrent(); phases += notice.state.value?.phase
+        advanceTimeBy(1999); runCurrent(); phases += notice.state.value?.phase
+        advanceTimeBy(5000); runCurrent(); phases += notice.state.value?.phase
+        assertEquals(listOf(CampusTitlePhase.CONNECTED, CampusTitlePhase.CONNECTED, null, null), phases)
+    }
+
+    @Test fun successImmediatelyReplacesTimeoutAndItsExpiryCannotClearSuccess() = runTest {
+        val notice = CampusConnectionNotice(backgroundScope)
+        notice.setVisible(true); notice.update(running); runCurrent()
+        advanceTimeBy(3500); runCurrent(); assertEquals(CampusTitlePhase.TIMED_OUT, notice.state.value?.phase)
+        advanceTimeBy(100); notice.update(success); runCurrent()
+        assertEquals(CampusTitlePhase.CONNECTED, notice.state.value?.phase)
+        notice.update(running); runCurrent()
+        advanceTimeBy(900); runCurrent(); assertEquals(CampusTitlePhase.CONNECTED, notice.state.value?.phase)
+        advanceTimeBy(1100); runCurrent(); assertNull(notice.state.value)
     }
 }

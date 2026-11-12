@@ -8,12 +8,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /** Presentation only. The timeout title never changes the real LoginTaskOutcome. */
-enum class CampusTitlePhase { CONNECTING, CONNECTED, TIMED_OUT }
+enum class CampusTitlePhase { CONNECTING, CONNECTED, TIMED_OUT, NO_WIFI }
 data class CampusTitleNotice(val taskId: String, val phase: CampusTitlePhase)
 
 internal const val CAMPUS_WARNING_DURATION_MS = 1000L
 internal const val CAMPUS_SUCCESS_DURATION_MS = 2000L
-internal const val CAMPUS_TITLE_WAIT_MS = 3000L
+internal const val CAMPUS_TITLE_WAIT_MS = 3500L
 
 /** One authoritative, process-local title state. UI lifecycle never starts authentication. */
 class CampusConnectionNotice(private val scope: CoroutineScope) {
@@ -28,8 +28,15 @@ class CampusConnectionNotice(private val scope: CoroutineScope) {
     private val consumed = mutableSetOf<CampusTitlePhase>()
     private var displayed: CampusTitleNotice? = null
     private var expiry: Job? = null
+    private var noWifiId: String? = null
+    private var noWifiSequence = 0L
+    private var noWifiConsumed = false
 
     fun update(value: LoginUiState) {
+        // Keep a confirmed result authoritative if a queued progress snapshot for the same task
+        // arrives later. Cancellation and an actual network change still invalidate that result.
+        if (taskId != null && taskId == value.taskId && login.completed && value.wifiConnected &&
+            value.outcome != LoginTaskOutcome.CANCELLED && !value.completed) return
         if (taskId != value.taskId) {
             slowDeadline?.cancel(); slowDeadline = null
             stopDisplay()
@@ -38,12 +45,16 @@ class CampusConnectionNotice(private val scope: CoroutineScope) {
             consumed.clear()
         }
         login = value
+        if (value.wifiSnapshotKnown && !value.wifiConnected) {
+            if (noWifiId == null) { noWifiId = "no-wifi-${++noWifiSequence}"; noWifiConsumed = false }
+        } else { noWifiId = null; noWifiConsumed = false }
         val id = taskId
-        if (id != null && value.running && value.outcome != LoginTaskOutcome.CANCELLED) {
+        if (id != null && value.wifiConnected && value.running && !value.completed &&
+            value.outcome == null) {
             if (!slow && slowDeadline == null) slowDeadline = scope.launch {
                 // A presentation deadline only: never cancels authentication or sends credentials.
                 delay(CAMPUS_TITLE_WAIT_MS)
-                if (taskId == id && login.running && login.outcome != LoginTaskOutcome.CANCELLED) {
+                if (taskId == id && login.wifiConnected && login.running && !login.completed && login.outcome == null) {
                     slow = true
                     slowDeadline = null
                     publish()
@@ -54,7 +65,7 @@ class CampusConnectionNotice(private val scope: CoroutineScope) {
         }
         publish()
     }
-    fun suspendObservation() { observing = false; publish() }
+    fun suspendObservation() { observing = false; noWifiId = null; noWifiConsumed = false; publish() }
     fun resumeObservation(value: LoginUiState) { observing = true; update(value) }
 
     fun setVisible(value: Boolean) {
@@ -63,6 +74,10 @@ class CampusConnectionNotice(private val scope: CoroutineScope) {
     }
 
     private fun publish() {
+        if (observing && login.wifiSnapshotKnown && !login.wifiConnected && noWifiId != null) {
+            present(CampusTitleNotice(noWifiId!!, CampusTitlePhase.NO_WIFI), noWifiConsumed)
+            return
+        }
         val id = login.taskId?.takeIf { observing && login.wifiConnected && login.outcome != LoginTaskOutcome.CANCELLED }
         val phase = when {
             login.completed -> CampusTitlePhase.CONNECTED
@@ -85,15 +100,20 @@ class CampusConnectionNotice(private val scope: CoroutineScope) {
             return
         }
         val presentation = CampusTitleNotice(id, phase)
+        present(presentation, phase in consumed)
+    }
+
+    private fun present(presentation: CampusTitleNotice, alreadyConsumed: Boolean) {
         if (displayed != presentation) stopDisplay()
-        if (displayed == presentation || phase !in consumed) {
+        if (displayed == presentation || !alreadyConsumed) {
             mutable.value = presentation
             if (visible && displayed != presentation) {
-                consumed += phase
+                if (presentation.phase == CampusTitlePhase.NO_WIFI) noWifiConsumed = true
+                else consumed += presentation.phase
                 displayed = presentation
                 expiry = scope.launch {
                     delay(when (presentation.phase) {
-                        CampusTitlePhase.TIMED_OUT -> CAMPUS_WARNING_DURATION_MS
+                        CampusTitlePhase.TIMED_OUT, CampusTitlePhase.NO_WIFI -> CAMPUS_WARNING_DURATION_MS
                         else -> CAMPUS_SUCCESS_DURATION_MS
                     })
                     if (displayed == presentation) {
