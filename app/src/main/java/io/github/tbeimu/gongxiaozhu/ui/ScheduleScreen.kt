@@ -451,26 +451,32 @@ private fun NowTag(row: Float?, now: LocalTime, cell: Dp) {
     }
 }
 
-/** Fixed left rail: lesson number above two compact time lines. */
+/** Fixed left rail: start time, the lesson number between the times, then the end time. */
 @Composable
 private fun LessonLabel(lesson: Int, height: Dp) {
     val time = bjutLessonTime(lesson)
     val fontScale = LocalDensity.current.fontScale
     val palette = gxz
-    // Keep all twelve rows and both time lines visible on smaller screens and at large font sizes.
+    // Keep all twelve rows, the number and both time lines visible on smaller screens and at large font sizes.
     val fit = if (time == null) 1f else minOf(1f,
-        (height.value - 4).coerceAtLeast(1f) / (34f * fontScale),
+        (height.value - 4).coerceAtLeast(1f) / (38f * fontScale),
         (LessonColumnWidth.value - 4) / (28f * fontScale))
     Column(Modifier.height(height).fillMaxWidth().clipToBounds(),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("$lesson", Modifier.testTag("lesson_$lesson"), color = palette.inkSoft.copy(alpha = .85f),
-            fontSize = (11.5f * fit).sp, lineHeight = (12 * fit).sp, fontWeight = FontWeight.Medium, maxLines = 1)
-        if (time != null) {
-            Spacer(Modifier.height(2.dp * fit))
-            Text("${time.start}\n${time.end}", Modifier.fillMaxWidth().testTag("lesson_time_$lesson"),
+        if (time == null) {
+            Text("$lesson", Modifier.testTag("lesson_$lesson"), color = palette.inkSoft.copy(alpha = .85f),
+                fontSize = (11.5f * fit).sp, lineHeight = (12 * fit).sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        } else {
+            Text("${time.start}", Modifier.fillMaxWidth().testTag("lesson_start_$lesson"),
                 color = palette.inkFaint.copy(alpha = .7f),
                 fontSize = (8.5f * fit).sp, lineHeight = (10 * fit).sp, textAlign = TextAlign.Center,
-                maxLines = 2, softWrap = false)
+                maxLines = 1, softWrap = false)
+            Text("$lesson", Modifier.testTag("lesson_$lesson"), color = palette.inkSoft.copy(alpha = .85f),
+                fontSize = (11.5f * fit).sp, lineHeight = (12 * fit).sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            Text("${time.end}", Modifier.fillMaxWidth().testTag("lesson_end_$lesson"),
+                color = palette.inkFaint.copy(alpha = .7f),
+                fontSize = (8.5f * fit).sp, lineHeight = (10 * fit).sp, textAlign = TextAlign.Center,
+                maxLines = 1, softWrap = false)
         }
     }
 }
@@ -536,23 +542,25 @@ private fun CourseCards(week: ScheduleWeek, count: Int, cell: Dp, today: LocalDa
                                     // Inside the card the now line continues behind the words.
                                     drawLine(palette.accent, Offset(0f, size.height * progress), Offset(size.width, size.height * progress), 1.5.dp.toPx())
                                 }
-                                // The course's colour lives only here, in the spine of the card.
-                                drawRect(tone.strong.copy(alpha = if (over) .3f else 1f), size = Size(3.dp.toPx(), size.height))
                             }
                             .then(if (progress != null) Modifier.border(1.5.dp, tone.strong, shape) else Modifier)
                             .clickable(interaction, LocalIndication.current, enabled = enabled) { onCourse(block.courses) }
                             .testTag("course_${week.number}_${block.day}_${block.first}")
-                            .padding(start = 5.dp, end = 2.dp, top = 5.dp, bottom = 4.dp)) {
+                            .padding(start = 4.dp, end = 3.dp, top = 5.dp, bottom = 4.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(if (overlap) "重叠课" else balanceHan(course.name, perLine, titleLines),
+                                modifier = Modifier.fillMaxWidth(),
                                 color = if (over) palette.inkFaint else tone.text,
                                 fontWeight = FontWeight.SemiBold, fontSize = 11.sp, lineHeight = 14.sp, letterSpacing = 0.sp,
-                                maxLines = titleLines, overflow = TextOverflow.Ellipsis)
+                                maxLines = titleLines, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                             if (locationLines > 0) {
                                 Spacer(Modifier.height(3.dp))
                                 Text(if (overlap) "点击查看" else course.location,
+                                    modifier = Modifier.fillMaxWidth(),
                                     color = if (over) palette.inkFaint.copy(alpha = .8f) else tone.text.copy(alpha = .55f),
                                     fontSize = 9.5.sp, lineHeight = 12.sp, letterSpacing = 0.sp,
-                                    maxLines = locationLines, overflow = TextOverflow.Ellipsis)
+                                    maxLines = locationLines, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                             }
                         }
                     }

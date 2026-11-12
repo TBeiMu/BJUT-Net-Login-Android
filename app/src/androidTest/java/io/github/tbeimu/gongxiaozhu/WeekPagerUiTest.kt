@@ -83,7 +83,7 @@ class WeekPagerUiTest {
 
     @Test fun unfinishedDragMovesCoursesAndDatesTogetherWhileRailsAndTitleStayFixed() {
         show()
-        val tags = (0..6).map { "weekday_$it" } + (1..12).flatMap { listOf("lesson_$it", "lesson_time_$it") }
+        val tags = (0..6).map { "weekday_$it" } + (1..12).flatMap { listOf("lesson_$it", "lesson_start_$it", "lesson_end_$it") }
         val fixed = tags.associateWith { compose.onNodeWithTag(it).fetchSemanticsNode().let { node -> node.id to node.boundsInRoot } }
         val course = compose.onNodeWithTag("course_1_0_1").fetchSemanticsNode().boundsInRoot
         val date = compose.onNodeWithTag("date_1_0").fetchSemanticsNode().boundsInRoot
@@ -169,7 +169,7 @@ class WeekPagerUiTest {
     @Test fun rapidFlicksAcceptEveryGestureAndKeepThePointerNodeAndFixedRails() {
         data.value = schedule(count = 9)
         show(); compose.mainClock.autoAdvance = false
-        val tags = listOf("week_course_viewport", "weekday_0", "lesson_1", "lesson_time_12")
+        val tags = listOf("week_course_viewport", "weekday_0", "lesson_1", "lesson_end_12")
         val fixed = tags.associateWith { compose.onNodeWithTag(it).fetchSemanticsNode().let { n -> n.id to n.boundsInRoot } }
         fun flick(direction: Int, expected: Int) {
             compose.onNodeWithTag("week_course_viewport").performTouchInput {

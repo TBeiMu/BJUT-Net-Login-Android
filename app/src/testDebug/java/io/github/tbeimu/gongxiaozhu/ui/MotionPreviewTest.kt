@@ -86,7 +86,7 @@ class MotionPreviewTest {
         compose.onNodeWithTag("schedule_mode").performClick(); compose.mainClock.advanceTimeBy(2500)
         frames(6)
         val grid = compose.onNodeWithTag("week_grid_11")
-        val fixedTags = (0..6).map { "weekday_$it" } + (1..12).map { "lesson_time_$it" }
+        val fixedTags = (0..6).map { "weekday_$it" } + (1..12).flatMap { listOf("lesson_start_$it", "lesson_end_$it") }
         val fixed = fixedTags.associateWith { tag -> compose.onNodeWithTag(tag).fetchSemanticsNode().let { it.id to it.boundsInRoot } }
         val course = compose.onNodeWithTag("course_11_0_1").fetchSemanticsNode().boundsInRoot
         val date = compose.onNodeWithTag("date_11_0").fetchSemanticsNode().boundsInRoot

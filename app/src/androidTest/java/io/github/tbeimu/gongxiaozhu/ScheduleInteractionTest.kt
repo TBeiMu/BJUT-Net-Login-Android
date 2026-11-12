@@ -162,7 +162,7 @@ class ScheduleInteractionTest {
         compose.setContent { GongXiaoZhuTheme {
             ScheduleScreen(state(), Modifier, {}, {}, {}, {}, todayProvider = { monday })
         } }
-        val tags = (0..6).map { "weekday_$it" } + (1..12).flatMap { listOf("lesson_$it", "lesson_time_$it") }
+        val tags = (0..6).map { "weekday_$it" } + (1..12).flatMap { listOf("lesson_$it", "lesson_start_$it", "lesson_end_$it") }
         val original = tags.associateWith { tag -> compose.onNodeWithTag(tag).fetchSemanticsNode().let {
             it.id to it.boundsInRoot.center
         } }
@@ -199,23 +199,28 @@ class ScheduleInteractionTest {
                 ScheduleScreen(state(), Modifier.height(350.dp), {}, {}, {}, {}, todayProvider = { monday })
             }
         } }
-        val expected = listOf("08:00\n08:45", "08:50\n09:35", "09:55\n10:40", "10:45\n11:30",
-            "13:30\n14:15", "14:20\n15:05", "15:25\n16:10", "16:15\n17:00",
-            "18:00\n18:45", "18:50\n19:35", "19:55\n20:40", "20:45\n21:30")
+        val expected = listOf("08:00" to "08:45", "08:50" to "09:35", "09:55" to "10:40", "10:45" to "11:30",
+            "13:30" to "14:15", "14:20" to "15:05", "15:25" to "16:10", "16:15" to "17:00",
+            "18:00" to "18:45", "18:50" to "19:35", "19:55" to "20:40", "20:45" to "21:30")
         screenshot("small-font-time")
-        expected.forEachIndexed { index, value ->
-            val node = compose.onNodeWithTag("lesson_time_${index+1}")
-            node.assertTextEquals(value).assertIsDisplayed()
-            node.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { get ->
-                val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
-                assertTrue(get(results))
-                val layout = results.single()
-                assertFalse("Time ${index+1}: size=${layout.size}, lines=${layout.lineCount}, paragraph=${layout.multiParagraph.height}, width=${layout.multiParagraph.width}", layout.hasVisualOverflow)
+        expected.forEachIndexed { index, (start, end) ->
+            listOf("lesson_start_${index+1}" to start, "lesson_end_${index+1}" to end).forEach { (tag, value) ->
+                val node = compose.onNodeWithTag(tag)
+                node.assertTextEquals(value).assertIsDisplayed()
+                node.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { get ->
+                    val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                    assertTrue(get(results))
+                    val layout = results.single()
+                    assertFalse("$tag: size=${layout.size}, lines=${layout.lineCount}, paragraph=${layout.multiParagraph.height}, width=${layout.multiParagraph.width}", layout.hasVisualOverflow)
+                }
             }
+            compose.onNodeWithTag("lesson_${index+1}").assertIsDisplayed()
         }
         compose.onNodeWithTag("week_grid_1").performTouchInput { swipeUp() }
-        compose.onNodeWithTag("lesson_time_1").assertTextEquals("08:00\n08:45")
-        compose.onNodeWithTag("lesson_time_12").assertTextEquals("20:45\n21:30")
+        compose.onNodeWithTag("lesson_start_1").assertTextEquals("08:00")
+        compose.onNodeWithTag("lesson_end_1").assertTextEquals("08:45")
+        compose.onNodeWithTag("lesson_start_12").assertTextEquals("20:45")
+        compose.onNodeWithTag("lesson_end_12").assertTextEquals("21:30")
     }
 
     @Test fun laterSchoolLessonsKeepTheirNumberWithoutInventingTimes() {
@@ -223,9 +228,11 @@ class ScheduleInteractionTest {
             ScheduleScreen(state(13), Modifier, {}, {}, {}, {}, todayProvider = { monday })
         } }
         compose.onNodeWithTag("lesson_13").assertIsDisplayed()
-        compose.onNodeWithTag("lesson_time_13").assertDoesNotExist()
+        compose.onNodeWithTag("lesson_start_13").assertDoesNotExist()
+        compose.onNodeWithTag("lesson_end_13").assertDoesNotExist()
         compose.onNodeWithTag("course_1_1_13").assertIsDisplayed()
-        compose.onNodeWithTag("lesson_time_12").assertTextEquals("20:45\n21:30")
+        compose.onNodeWithTag("lesson_start_12").assertTextEquals("20:45")
+        compose.onNodeWithTag("lesson_end_12").assertTextEquals("21:30")
     }
 
     private fun screenshot(name: String) {
