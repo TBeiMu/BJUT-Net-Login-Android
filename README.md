@@ -100,4 +100,6 @@ v0.4.8 已完成 Debug／Release 各 258 项单元测试、Lint、签名构建�
 
 v0.4.10 完成 Debug／Release 各 266 项单元测试、两种 Lint、签名构建，Android 12／14／16 各 28 项外观与相关回归检查，并验证固定签名覆盖安装保留本机资料和原壁纸。手机品牌及动态壁纸适配仍需实际使用确认，详见 [本版验证记录](docs/releases/v0.4.10.md)。
 
+当前 `codex/schedule-follow-drag` 分支提供 **0.4.11-test1／versionCode 27** 跟手翻页测试包：课程随纵向拖动移动，短拖回弹，慢拖超过 25% 或快速划动翻一周。测试包沿用正式签名，先供手感体验，正式下载与 App 内版本源仍为 v0.4.10。安装与验证说明见 [课表跟手测试](docs/testing/课表跟手测试.md)。
+
 认证协议参考 [TwiceTry/BJUT_Net_Login](https://github.com/TwiceTry/BJUT_Net_Login)，界面参考 [矿小助](https://github.com/cumtflyingstudio/FlyingKxz-1.4.10)。工小助在 Kotlin／Compose 工程中独立实现，保留来源及许可证说明。
