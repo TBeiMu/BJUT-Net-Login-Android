@@ -1,147 +1,150 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.spring
-import androidx.compose.foundation.OverscrollEffect
-import androidx.compose.foundation.gestures.AnchoredDraggableState
-import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.unit.Velocity
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlin.math.abs
-import kotlin.math.sign
 
-internal val WeekSnapAnimation = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy,
-    stiffness = Spring.StiffnessMediumLow, visibilityThreshold = .5f)
 internal const val WeekSnapFraction = .25f
+// Matches Foundation 1.9.4's anchored draggable threshold; expressed in dp/s at the UI boundary.
+internal const val WeekFlingVelocityDp = 125f
 
-/** Only the settled week is saved. Each gesture owns at most the current and adjacent anchors. */
-internal class WeekPagerState(initialWeek: Int, val weekCount: Int, private val onSelected: (Int) -> Unit) {
+/** Stable for the page lifetime: re-touching never replaces the pointer node or restarts at zero. */
+internal class WeekPagerState(initialWeek: Int, val weekCount: Int, private val scope: CoroutineScope,
+    private val onSelected: (Int) -> Unit) {
     var week by mutableIntStateOf(initialWeek.coerceIn(1, weekCount))
         private set
-    var session by mutableStateOf(WeekDragSession(week, weekCount, 1f, this))
+    var position by mutableFloatStateOf(week.toFloat())
         private set
-    private var disposed = false
-
-    fun resize(height: Float) {
-        if (height > 0 && abs(height - session.height) > .5f) replace(week, height)
-    }
-
-    fun select(number: Int) {
-        if (disposed) return
-        val target = number.coerceIn(1, weekCount)
-        replace(target, session.height)
-        onSelected(target)
-    }
-
-    fun cancel(expected: WeekDragSession = session) {
-        if (!disposed && session === expected) replace(week, session.height)
-    }
-
-    fun dispose() { disposed = true; session.invalidate() }
-
-    internal fun finish(expected: WeekDragSession, epoch: Int) {
-        if (disposed || session !== expected || expected.epoch != epoch || expected.dragging) return
-        val target = expected.anchors.anchors.closestAnchor(expected.anchors.requireOffset()) ?: return
-        if (abs(expected.anchors.requireOffset() - expected.anchors.anchors.positionOf(target)) > .5f) return
-        // The delegate is finishing inside its own mutex. Swap the session without cancelling that
-        // coroutine; its remaining cleanup has no reference to the newly selected week.
-        expected.active = false
-        val next = target.coerceIn(maxOf(1, week - 1), minOf(weekCount, week + 1))
-        week = next
-        session = WeekDragSession(next, weekCount, expected.height, this)
-        if (next != expected.baseWeek) onSelected(next)
-    }
-
-    private fun replace(target: Int, height: Float) {
-        session.invalidate()
-        week = target
-        session = WeekDragSession(target, weekCount, height, this)
-    }
-}
-
-internal class WeekDragSession(val baseWeek: Int, weekCount: Int, val height: Float, private val owner: WeekPagerState) {
-    val anchors = AnchoredDraggableState(baseWeek, DraggableAnchors {
-        baseWeek at 0f
-        if (baseWeek > 1) (baseWeek - 1) at height
-        if (baseWeek < weekCount) (baseWeek + 1) at -height
-    })
-    val interactions = MutableInteractionSource()
+    private var edge by mutableFloatStateOf(0f)
     var dragging by mutableStateOf(false)
         private set
     var settling by mutableStateOf(false)
         private set
-    var edge by mutableFloatStateOf(0f)
+    var height = 1f
         private set
-    var epoch = 0
-        private set
-    var active = true
-    private var flingJob: Job? = null
-    val offset: Float get() = anchors.requireOffset() + edge
-    val fraction: Float get() = offset / height
-    val moving: Boolean get() = dragging || settling || abs(offset) > .5f
+    private var velocityThreshold = WeekFlingVelocityDp
+    private var baseWeek = week
+    private var dragMin = week.toFloat()
+    private var dragMax = week.toFloat()
+    private var distance = 0f
+    private var epoch = 0
+    private var animation: Job? = null
+    private var disposed = false
+    val visualPosition: Float get() = position - edge / height
+    val moving: Boolean get() = dragging || settling || abs(position - week) > .001f || abs(edge) > .5f
+
+    private val events = MutableInteractionSource()
+    // Draggable reports cancellation before calling onDragStopped(0). Handle it synchronously so a
+    // cancelled long drag cannot be interpreted as an accepted release by a delayed Flow collector.
+    val interactions = object : MutableInteractionSource {
+        override val interactions = events.interactions
+        override suspend fun emit(interaction: Interaction) {
+            if (interaction is DragInteraction.Cancel) cancel()
+            events.emit(interaction)
+        }
+        override fun tryEmit(interaction: Interaction): Boolean {
+            if (interaction is DragInteraction.Cancel) cancel()
+            return events.tryEmit(interaction)
+        }
+    }
+
+    fun resize(height: Float, velocityThreshold: Float = this.velocityThreshold) {
+        this.velocityThreshold = velocityThreshold
+        if (height > 0 && abs(height - this.height) > .5f) { cancel(); this.height = height }
+    }
 
     fun beginGesture() {
-        if (!active || dragging) return
-        epoch++
+        if (disposed) return
+        interruptAnimation()
+        baseWeek = week
+        val visual = visualPosition
+        position = visual.coerceIn(1f, weekCount.toFloat())
+        edge = (position - visual) * height
+        // Several accepted flicks can be ahead of the animation. Include the touched position
+        // in the new bounds, otherwise the third quick gesture jumps to the previous target.
+        dragMin = minOf(position, maxOf(1, baseWeek - 1).toFloat())
+        dragMax = maxOf(position, minOf(weekCount, baseWeek + 1).toFloat())
+        distance = 0f
         dragging = true
-        settling = false
+        // Keep position and edge. A second flick starts from the previous accepted target week,
+        // while the rendered old/new cards stay exactly where the user touched them.
     }
 
-    fun endGesture() { dragging = false }
-    fun cancelGesture() { if (active) owner.cancel(this) }
-    fun invalidate() { active = false; epoch++; flingJob?.cancel() }
-
-    /** Consume only excess movement with resistance. Rendering uses the same offset for dates. */
-    val overscroll = object : OverscrollEffect {
-        override val isInProgress: Boolean get() = abs(edge) > .5f
-
-        override fun applyToScroll(delta: Offset, source: NestedScrollSource, performScroll: (Offset) -> Offset): Offset {
-            beginGesture()
-            var remaining = delta.y
-            if (edge != 0f && edge * remaining < 0f) {
-                val releasing = if (abs(remaining) * .2f < abs(edge)) remaining else -edge / .2f
-                edge += releasing * .2f
-                remaining -= releasing
-            }
-            val consumed = performScroll(Offset(delta.x, remaining))
-            edge = (edge + (remaining - consumed.y) * .2f).coerceIn(-height * .06f, height * .06f)
-            return delta
+    fun dragBy(delta: Float) {
+        if (disposed || !dragging) return
+        distance += delta
+        var remaining = delta
+        if (edge != 0f && edge * remaining < 0f) {
+            val release = if (abs(remaining) * .2f < abs(edge)) remaining else -edge / .2f
+            edge += release * .2f
+            remaining -= release
         }
+        val proposed = position - remaining / height
+        val bounded = proposed.coerceIn(dragMin, dragMax)
+        val consumed = (position - bounded) * height
+        position = bounded
+        edge = (edge + (remaining - consumed) * .2f).coerceIn(-height * .06f, height * .06f)
+    }
 
-        override suspend fun applyToFling(velocity: Velocity, performFling: suspend (Velocity) -> Velocity) {
-            if (!active) { performFling(Velocity.Zero); return }
-            dragging = false
-            settling = true
-            val token = epoch
-            flingJob = currentCoroutineContext().job
+    fun endGesture(velocity: Float) {
+        if (disposed || !dragging) return
+        dragging = false
+        val delta = when {
+            distance == 0f -> 0
+            abs(velocity) >= velocityThreshold -> weekDragDirection(velocity)
+            abs(distance) >= height * WeekSnapFraction -> weekDragDirection(distance)
+            else -> 0
+        }
+        val target = (baseWeek + delta).coerceIn(1, weekCount)
+        if (week != target) { week = target; onSelected(target) }
+        val start = visualPosition
+        position = start
+        edge = 0f
+        val token = ++epoch
+        if (abs(start - target) < .001f) { position = target.toFloat(); settling = false; return }
+        settling = true
+        animation = scope.launch {
             try {
-                // Foundation 1.9.4 picks the nearest anchor for exactly zero velocity, bypassing
-                // positionalThreshold. A negligible directional velocity preserves the 25% rule
-                // when the user pauses before release; its built-in fast-fling threshold is intact.
-                val release = when {
-                    edge != 0f -> Velocity.Zero
-                    velocity.y == 0f && anchors.requireOffset() != 0f -> Velocity(velocity.x, sign(anchors.requireOffset()) * .001f)
-                    else -> velocity
+                // Bounded settling has no long spring tail. A new touch cancels this job and owns
+                // the existing visual position, even when several flicks arrive within 150 ms.
+                animate(start, target.toFloat(), animationSpec = tween(
+                    if (abs(velocity) >= velocityThreshold) 150 else 200, easing = FastOutSlowInEasing)) { value, _ ->
+                    if (!disposed && epoch == token) position = value
                 }
-                performFling(release)
-                if (edge != 0f) animate(edge, 0f, animationSpec = WeekSnapAnimation) { value, _ ->
-                    if (active && token == epoch) edge = value
-                }
-                if (active && token == epoch) { edge = 0f; owner.finish(this@WeekDragSession, token) }
-            } finally {
-                if (token == epoch) { settling = false; flingJob = null }
-            }
+                if (!disposed && epoch == token) position = target.toFloat()
+            } finally { if (epoch == token) { settling = false; animation = null } }
         }
     }
+
+    fun select(number: Int) {
+        if (disposed) return
+        cancel()
+        val target = number.coerceIn(1, weekCount)
+        if (target != week) { week = target; onSelected(target) }
+        position = target.toFloat()
+    }
+
+    fun cancel() {
+        if (disposed) return
+        interruptAnimation()
+        dragging = false
+        distance = 0f
+        position = week.toFloat()
+        edge = 0f
+    }
+
+    fun dispose() { cancel(); disposed = true }
+    private fun interruptAnimation() { epoch++; animation?.cancel(); animation = null; settling = false }
 }

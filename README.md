@@ -2,15 +2,15 @@
 
 北京工业大学 Android 校园助手。整学期课表、校园网登录和资费查询集中在一个 App 中。
 
-**v0.4.11 正式版 · Android 12 及以上 · versionCode 29**
+**v0.4.12 正式版 · Android 12 及以上 · versionCode 30**
 
 用户已确认 v0.4.8 的主要功能基本齐全并可用。项目进入维护与体验优化，源码仓库为 [TBeiMu/BJUT_gxz](https://github.com/TBeiMu/BJUT_gxz)。
 
-v0.4.11 增加课表跟手翻页，优化无 WiFi 与认证成功提示，将标题等待期限调整为 3.5 秒。保留六种渐变、壁纸模糊及更新地址迁移兼容，详见 [更新说明](docs/releases/v0.4.11.md)。
+v0.4.12 优化连续轻划，保持一划一周，下一次手势立即接上；松手确定目标后立即更新周次标题。保留校园网提示、六种渐变、壁纸模糊及更新地址兼容，详见 [更新说明](docs/releases/v0.4.12.md)。
 
 ## 下载与安装
 
-[下载 v0.4.11 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.4.11/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.4.11/SHA256SUMS.txt)
+[下载 v0.4.12 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.4.12/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.4.12/SHA256SUMS.txt)
 
 下载后使用手机的浏览器或文件管理器打开 APK，按系统提示允许“安装未知应用”。已有正式版直接覆盖安装，账号、默认账号、课表和设置会保留；请勿先卸载或清除应用数据。调试版与正式版独立安装。
 
@@ -24,7 +24,7 @@ v0.4.11 增加课表跟手翻页，优化无 WiFi 与认证成功提示，将标
 | 资费 | 已用流量、可用流量、消费保护、账户余额、在线设备及单台设备注销 |
 | 我的 | 课表管理、校园网账号、校园网连接、外观设置、检查更新、关于工小助 |
 
-课表是默认首页。每页展示 12 节及北工大上课时间，向上划下一周、向下划上一周。课程跟随手指移动，日期同步过渡，星期和左侧时间栏固定；慢拖超过课程区域的 25% 或快速划动翻一周，短拖回弹，首末周不循环。右侧圆点可展开周次列表，“回到本周”位于圆点下方，从右侧滑入，使用模糊半透明底色。支持自定义壁纸、深色模式和字体放大。
+课表是默认首页。每页展示 12 节及北工大上课时间，向上划下一周、向下划上一周。课程跟随手指移动，日期同步过渡，星期和左侧时间栏固定；慢拖超过课程区域的 25% 或快速划动翻一周，短拖回弹，首末周不循环。连续轻划可立即接上，松手确定目标后周次标题立即更新。右侧圆点可展开周次列表，“回到本周”位于圆点下方，从右侧滑入，使用模糊半透明底色。支持自定义壁纸、深色模式和字体放大。
 
 ## 开始使用
 
@@ -101,5 +101,7 @@ v0.4.8 已完成 Debug／Release 各 258 项单元测试、Lint、签名构建�
 v0.4.10 完成 Debug／Release 各 266 项单元测试、两种 Lint、签名构建，Android 12／14／16 各 28 项外观与相关回归检查，并验证固定签名覆盖安装保留本机资料和原壁纸。手机品牌及动态壁纸适配仍需实际使用确认，详见 [本版验证记录](docs/releases/v0.4.10.md)。
 
 v0.4.11 完成 Debug／Release 各 279 项单元测试、两种 Lint、签名构建。Android 12／14／16 已完成跟手翻页及连接提示专项检查，包括无 WiFi 跳过认证、成功立即覆盖等待或超时、3.5 秒边界、后台返回及固定栏回归。校园实际认证耗时和手机手感由用户复测确认，详见 [本版验证记录](docs/releases/v0.4.11.md)。本版 versionCode 29，可覆盖此前 test1／test2 安装包。
+
+v0.4.12 完成 Debug／Release 各 284 项单元测试、两种 Lint、签名构建，Android 12／14／16 各 38 项课表与标题回归，并核对 v0.4.11 覆盖升级后的资料保留。连续快划和下一帧周次反馈已在模拟器验证，手机手感仍需使用反馈，详见 [专项验证记录](docs/testing/课表连续轻划验证.md)。
 
 认证协议参考 [TwiceTry/BJUT_Net_Login](https://github.com/TwiceTry/BJUT_Net_Login)，界面参考 [矿小助](https://github.com/cumtflyingstudio/FlyingKxz-1.4.10)。工小助在 Kotlin／Compose 工程中独立实现，保留来源及许可证说明。

@@ -8,10 +8,9 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.AnchoredDraggableDefaults
 import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.anchoredDraggable
-import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -67,8 +66,9 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
     LaunchedEffect(state.canCancelImport) { if (!state.canCancelImport) cancelImportConfirmation = false }
     ReportDialogVisibility(details != null || (state.canCancelImport && cancelImportConfirmation), onDialogVisibilityChanged)
     val latestSelected by rememberUpdatedState<(Int) -> Unit>({ selected = it })
+    val pagerScope = rememberCoroutineScope()
     val pager = remember(schedule) { schedule?.let {
-        WeekPagerState(selected, it.term.weekCount) { number -> latestSelected(number) }
+        WeekPagerState(selected, it.term.weekCount, pagerScope) { number -> latestSelected(number) }
     } }
     DisposableEffect(pager) { onDispose { pager?.dispose() } }
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
@@ -186,27 +186,18 @@ internal fun weekDragDirection(delta: Float): Int = when {
     else -> 0
 }
 
-@Suppress("DEPRECATION") // Foundation 1.9.4 needs this overload to catch a running custom fling immediately.
 @Composable
 private fun WeekGrid(schedule: SemesterSchedule, pager: WeekPagerState, count: Int, today: LocalDate,
     interactive: Boolean, onCourse: (List<ScheduleCourse>) -> Unit) {
-    val session = pager.session
     val week = schedule.weeks[pager.week - 1]
-    LaunchedEffect(session) {
-        session.interactions.interactions.collect { event -> when (event) {
-            is DragInteraction.Start -> session.beginGesture()
-            is DragInteraction.Stop -> session.endGesture()
-            is DragInteraction.Cancel -> session.cancelGesture()
-        } }
-    }
-    val fling = AnchoredDraggableDefaults.flingBehavior(session.anchors,
-        positionalThreshold = { it * WeekSnapFraction }, animationSpec = WeekSnapAnimation)
-    val gesture = Modifier.anchoredDraggable(state = session.anchors, orientation = Orientation.Vertical,
-        enabled = interactive, interactionSource = session.interactions, overscrollEffect = session.overscroll,
-        flingBehavior = fling, startDragImmediately = session.settling)
+    val velocityThreshold = with(LocalDensity.current) { WeekFlingVelocityDp.dp.toPx() }
+    val drag = rememberDraggableState(pager::dragBy)
+    val gesture = Modifier.draggable(state = drag, orientation = Orientation.Vertical,
+        enabled = interactive, interactionSource = pager.interactions, startDragImmediately = pager.settling,
+        onDragStarted = { pager.beginGesture() }, onDragStopped = { pager.endGesture(it) })
     Column(Modifier.fillMaxSize().testTag("schedule_pager")) {
         ScheduleDates(schedule, pager, today)
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().onSizeChanged { pager.resize(it.height.toFloat()) }
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().onSizeChanged { pager.resize(it.height.toFloat(), velocityThreshold) }
             .testTag("week_grid_${week.number}")) {
             // Labels share fixed geometry across all weeks, including unexpected later lessons.
             val rowCount = maxOf(12, count)
@@ -215,12 +206,8 @@ private fun WeekGrid(schedule: SemesterSchedule, pager: WeekPagerState, count: I
                 Column(Modifier.width(LessonColumnWidth)) { repeat(rowCount) { n ->
                     LessonLabel(n + 1, cell)
                 } }
-                // A fresh pointer node owns each session. Disposing an old node cancels its fling
-                // before it can read the replacement node's anchors; fixed labels remain outside.
-                key(session) {
-                    WeekLayers(schedule, session, Modifier.weight(1f).fillMaxHeight().then(gesture).testTag("week_course_viewport")) { current ->
-                        CourseCards(current, count, cell, interactive && !session.moving && current.number == pager.week, onCourse)
-                    }
+                WeekLayers(schedule, pager, Modifier.weight(1f).fillMaxHeight().then(gesture).testTag("week_course_viewport")) { current ->
+                    CourseCards(current, count, cell, interactive && !pager.moving && current.number == pager.week, onCourse)
                 }
             }
         }
@@ -302,7 +289,7 @@ private fun ScheduleDates(schedule: SemesterSchedule, pager: WeekPagerState, tod
             }
         }
         val dateHeight = with(LocalDensity.current) { 18.sp.toDp() + 6.dp }
-        WeekLayers(schedule, pager.session, Modifier.fillMaxWidth().padding(start = LessonColumnWidth)
+        WeekLayers(schedule, pager, Modifier.fillMaxWidth().padding(start = LessonColumnWidth)
             .height(dateHeight).testTag("week_date_viewport")) { current ->
             Row(Modifier.fillMaxSize()) {
                 current.dates.forEachIndexed { day, date ->
@@ -321,15 +308,18 @@ private fun ScheduleDates(schedule: SemesterSchedule, pager: WeekPagerState, tod
 
 /** Both clipped viewports use this fraction; fixed weekday and time rails are outside the layers. */
 @Composable
-private fun WeekLayers(schedule: SemesterSchedule, session: WeekDragSession, modifier: Modifier,
+private fun WeekLayers(schedule: SemesterSchedule, pager: WeekPagerState, modifier: Modifier,
     content: @Composable (ScheduleWeek) -> Unit) {
-    val fraction = session.fraction
-    val adjacent = when { fraction < 0 -> session.baseWeek + 1; fraction > 0 -> session.baseWeek - 1; else -> null }
+    val visibleWeeks by remember(pager) { derivedStateOf {
+        val position = pager.visualPosition
+        kotlin.math.floor(position).toInt().coerceIn(1, pager.weekCount)..
+            kotlin.math.ceil(position).toInt().coerceIn(1, pager.weekCount)
+    } }
     Box(modifier.clipToBounds()) {
-        listOfNotNull(session.baseWeek, adjacent?.takeIf { it in 1..schedule.term.weekCount }).forEach { number ->
+        visibleWeeks.forEach { number ->
             key(number) {
                 Box(Modifier.fillMaxSize().graphicsLayer {
-                    translationY = (session.fraction + number - session.baseWeek) * size.height
+                    translationY = (number - pager.visualPosition) * size.height
                 }) { content(schedule.weeks[number - 1]) }
             }
         }

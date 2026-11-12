@@ -1,7 +1,6 @@
 package io.github.tbeimu.gongxiaozhu
 
 import android.graphics.Bitmap
-import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
@@ -108,15 +107,17 @@ class WeekPagerUiTest {
         compose.onNodeWithTag("week_courses_2").assertDoesNotExist()
     }
 
-    @Test fun slowShortDragReturnsAndQuarterPageDragCommitsOnlyAfterSettling() {
+    @Test fun slowShortDragReturnsAndQuarterPageReleaseUpdatesTitleOnNextFrame() {
         show()
         drag(-.18f)
         title(1)
         compose.mainClock.autoAdvance = false
         drag(-.35f)
-        title(1)
+        compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
+        title(2)
+        compose.onNodeWithTag("week_courses_1").assertExists()
         compose.mainClock.advanceTimeBy(80); compose.waitForIdle()
-        title(1); screenshot("settling")
+        title(2); screenshot("settling")
         settle()
         title(2)
         compose.onNodeWithTag("date_2_0").assertTextEquals("11/9")
@@ -162,7 +163,48 @@ class WeekPagerUiTest {
         val after = compose.onNodeWithTag("week_courses_2").fetchSemanticsNode().boundsInRoot.top
         assertTrue("Interruption must keep the existing position", abs(after - before) < viewport.height * .08f)
         grid().performTouchInput { advanceEventTime(250); up() }
-        settle(); assertTrue(selectedWeek() in 1..2)
+        settle(); title(2)
+    }
+
+    @Test fun rapidFlicksAcceptEveryGestureAndKeepThePointerNodeAndFixedRails() {
+        data.value = schedule(count = 9)
+        show(); compose.mainClock.autoAdvance = false
+        val tags = listOf("week_course_viewport", "weekday_0", "lesson_1", "lesson_time_12")
+        val fixed = tags.associateWith { compose.onNodeWithTag(it).fetchSemanticsNode().let { n -> n.id to n.boundsInRoot } }
+        fun flick(direction: Int, expected: Int) {
+            compose.onNodeWithTag("week_course_viewport").performTouchInput {
+                swipeWithVelocity(center, center + Offset(0f, direction * height * .12f), 1500f)
+            }
+            // Only one frame between gestures: the 150 ms settling animation cannot finish.
+            compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
+            title(expected)
+            tags.forEach { tag -> val node = compose.onNodeWithTag(tag).fetchSemanticsNode()
+                assertEquals(fixed.getValue(tag).first, node.id)
+                assertEquals(fixed.getValue(tag).second, node.boundsInRoot)
+            }
+            compose.onNodeWithText("课程详情").assertDoesNotExist()
+        }
+        (2..7).forEach { flick(-1, it) }
+        screenshot("rapid-forward")
+        (6 downTo 1).forEach { flick(1, it) }
+        settle(); title(1)
+        compose.onNodeWithTag("date_1_0").assertTextEquals("11/2")
+        compose.onNodeWithTag("course_1_0_1").assertIsDisplayed()
+    }
+
+    @Test fun releasedTargetSurvivesRotationAndPageRemovalBeforeAnimationFinishes() {
+        show(); compose.mainClock.autoAdvance = false
+        drag(-.35f)
+        compose.mainClock.advanceTimeByFrame(); compose.waitForIdle(); title(2)
+        compose.activityRule.scenario.recreate()
+        compose.mainClock.advanceTimeByFrame(); compose.waitForIdle(); title(2)
+        drag(-.35f)
+        compose.mainClock.advanceTimeByFrame(); compose.waitForIdle(); title(3)
+        compose.runOnUiThread { visible.value = false }
+        compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
+        compose.runOnUiThread { visible.value = true }
+        settle(); title(3)
+        compose.onNodeWithTag("date_3_0").assertTextEquals("11/16")
     }
 
     @Test fun dragOnACourseDoesNotOpenDetailsButAStillTapDoes() {
@@ -185,19 +227,20 @@ class WeekPagerUiTest {
         compose.mainClock.autoAdvance = false
         drag(-.4f)
         compose.runOnUiThread { unblocked.value = false }
-        settle(); title(1)
-        compose.runOnUiThread { unblocked.value = true }; compose.waitForIdle()
-        drag(-.4f)
-        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
-        settle()
-        InstrumentationRegistry.getInstrumentation().startActivitySync(
-            Intent(InstrumentationRegistry.getInstrumentation().targetContext, WallpaperTestActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+        settle(); title(2)
+        compose.runOnUiThread { unblocked.value = true }
         compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
-        title(1)
+        drag(-.4f)
+        compose.mainClock.advanceTimeByFrame(); compose.waitForIdle(); title(3)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        // There is no resumed Compose root while the activity is in the background.
+        compose.mainClock.advanceTimeBy(1600)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
+        title(3)
         drag(-.4f)
         compose.runOnUiThread { data.value = schedule(lastLesson = 13) }
-        settle(); title(1)
+        settle(); title(4)
         compose.onNodeWithTag("lesson_13").assertIsDisplayed()
     }
 
@@ -236,7 +279,7 @@ class WeekPagerUiTest {
         show(); turnTo(2)
         compose.onNodeWithText("本周无课").assertIsDisplayed()
         compose.mainClock.autoAdvance = false
-        drag(-.4f)
+        drag(-.4f, release = false)
         compose.runOnUiThread { visible.value = false }
         settle()
         compose.runOnUiThread { visible.value = true }
