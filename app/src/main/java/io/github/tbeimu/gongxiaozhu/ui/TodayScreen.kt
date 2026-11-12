@@ -100,7 +100,7 @@ internal fun ScheduleHome(state: ScheduleUiState, modifier: Modifier, onImport: 
         else ScheduleScreen(state, Modifier.fillMaxSize(), onImport, onPause, onRetry, onMine, todayProvider, connectionNotice,
             titleUnobstructed, onCancelImport, onDialogVisibilityChanged, nowProvider)
         if (schedule != null && !state.blocked) ModeSwitch(week, Modifier.align(Alignment.BottomEnd)
-            .padding(end = 20.dp, bottom = if (week) 14.dp else 18.dp)) { week = !week }
+            .padding(end = 20.dp, bottom = 18.dp)) { week = !week }
     }
 }
 
@@ -163,6 +163,7 @@ private fun TodayScreen(state: ScheduleUiState, schedule: SemesterSchedule, onIm
         Column(Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp, top = 10.dp)) {
             val isToday = selected == today.value
             Text((if (isToday) "今天 · " else "") + "${selected.monthValue}月${selected.dayOfMonth}日 · 第 ${week.number} 周",
+                modifier = Modifier.testTag("schedule_overline"),
                 style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.sp), color = palette.inkFaint, maxLines = 1)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f).testTag("schedule_week_title")) {

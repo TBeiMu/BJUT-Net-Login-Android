@@ -1,6 +1,7 @@
 package io.github.tbeimu.gongxiaozhu.schedule
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -12,21 +13,29 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.UUID
+
+internal const val SCHEDULE_IMPORT_TIMEOUT_MS = 30 * 60 * 1000L
+internal const val SCHEDULE_SERVICE_START_TIMEOUT_MS = 5_000L
 
 enum class ScheduleNotice { IDLE, PROGRESS, SUCCESS, PAUSED, ERROR }
 
 data class ScheduleUiState(val data: ScheduleData = ScheduleData(), val loading: Boolean = true,
     val busy: Boolean = false, val blocked: Boolean = false, val page: ScheduleLoginPage? = null,
     val message: String = "导入研究生课表，离线也能查看整个学期", val imported: Int = 0, val total: Int = 0,
-    val networkKind: ScheduleNetworkKind? = null, val notice: ScheduleNotice = ScheduleNotice.IDLE) {
+    val networkKind: ScheduleNetworkKind? = null, val notice: ScheduleNotice = ScheduleNotice.IDLE,
+    val taskId: String? = null) {
     val canCancelImport: Boolean get() = !loading && !blocked && !busy &&
         (data.pending != null || notice == ScheduleNotice.PAUSED || notice == ScheduleNotice.ERROR)
 }
 
 class ScheduleController(private val scope: CoroutineScope, private val repository: ScheduleRepository,
-    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO) {
+    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    private val startService: ((String) -> Unit)? = null) {
     private val mutable = MutableStateFlow(ScheduleUiState())
     val state = mutable.asStateFlow()
     private var foreground = false
@@ -36,10 +45,15 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     private var job: Job? = null
     private var generation = 0L
     private var networkTask = false
+    private var serviceReady: CompletableDeferred<Unit>? = null
 
     init { reload() }
     fun enterForeground() { foreground = true }
-    fun leaveForeground() { foreground = false; pause() }
+    fun leaveForeground() {
+        foreground = false
+        // An already submitted operation belongs to the service. An idle login form does not.
+        if (state.value.taskId == null) pause()
+    }
     fun networkChanged(value: ScheduleConnection?) {
         observed = true
         if (network?.identity != value?.identity) pause("网络已变化，导入暂停；连接后可重新登录继续")
@@ -70,17 +84,20 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         if (!foreground || job != null || state.value.blocked) return
         val selected = network?.takeIf { observed } ?: run { message("请连接可上网的 WiFi 或开启移动数据，再导入课表"); return }
         session?.close()
-        val active = selected.session().also { session = it }
         networkTask = true
-        mutable.value = state.value.copy(page = null, notice = ScheduleNotice.PROGRESS, message = "正在打开学校登录页…")
-        runTask { handle(active.open(), active) }
+        mutable.value = state.value.copy(page = null, imported = 0, total = 0,
+            notice = ScheduleNotice.PROGRESS, message = "正在打开学校登录页…")
+        runNetworkTask {
+            val active = selected.session().also { session = it }
+            handle(active.open(), active)
+        }
     }
 
     fun submit(token: String, values: Map<String, String>) {
         val active = session ?: return
         if (!foreground || !observed || job != null || state.value.page?.token != token) return
-        mutable.value = state.value.copy(notice = ScheduleNotice.PROGRESS, message = "正在由学校验证登录…")
-        runTask { handle(active.submit(token, values), active) }
+        mutable.value = state.value.copy(page = null, notice = ScheduleNotice.PROGRESS, message = "正在由学校验证登录…")
+        runNetworkTask { handle(active.submit(token, values), active) }
     }
 
     suspend fun resource(token: String, url: String): ScheduleResource? {
@@ -99,14 +116,17 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     private suspend fun handle(gate: ScheduleGate, active: ScheduleSession) {
         currentCoroutineContext().ensureActive()
         when (gate) {
-            is ScheduleGate.Login -> mutable.value = state.value.copy(page = gate.page,
-                message = "请在学校页面登录；密码不保存，导入结束后清除登录态")
+            is ScheduleGate.Login -> {
+                if (!foreground) pause("学校登录尚未完成，请返回 App 重新打开登录页")
+                else mutable.value = state.value.copy(page = gate.page,
+                    message = "请在学校页面登录；密码不保存，导入结束后清除登录态")
+            }
             is ScheduleGate.Ready -> {
                 currentCoroutineContext().ensureActive()
                 var data = io { repository.begin(gate.identity, gate.term) }
                 mutable.value = state.value.copy(data = data, page = null, imported = data.pending!!.weeks.size,
                     notice = ScheduleNotice.PROGRESS,
-                    total = gate.term.weekCount, message = "正在导入当前学期，请保持 App 在前台")
+                    total = gate.term.weekCount, message = "正在导入当前学期，切换 App 或锁屏后仍会继续")
                 for (number in 1..gate.term.weekCount) {
                     if (data.pending!!.weeks.any { it.number == number }) continue
                     currentCoroutineContext().ensureActive()
@@ -131,8 +151,10 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         generation++
         session?.close(); session = null
         networkTask = false
-        job?.cancel()
+        // Main.immediate can finish cleanup and stop the service inline during cancel().
+        // Publish the reason first so observers never see an idle task still marked as importing.
         mutable.value = state.value.copy(page = null, notice = ScheduleNotice.PAUSED, message = text)
+        job?.cancel()
     }
 
     /** Called after confirmation. Finish old request cleanup before touching its saved progress. */
@@ -163,6 +185,35 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     fun unsupportedWebView() { pause(ScheduleProblem.WEBVIEW.hint) }
     fun message(text: String) { mutable.value = state.value.copy(message = text, notice = ScheduleNotice.ERROR) }
 
+    /** Only a matching, live in-memory task can be admitted or stopped by a service callback. */
+    fun serviceStarted(id: String): Boolean {
+        if (state.value.taskId != id || job?.isActive != true) return false
+        return serviceReady?.complete(Unit) == true
+    }
+    fun pauseTask(id: String, text: String = "导入已暂停；已取得的进度保留，继续时需重新登录") {
+        if (state.value.taskId == id) pause(text)
+    }
+    fun serviceStopped(id: String) = pauseTask(id, "导入服务已停止，进度保留；请返回 App 手动继续")
+
+    private fun runNetworkTask(action: suspend () -> Unit) {
+        val id = UUID.randomUUID().toString()
+        val ready = CompletableDeferred<Unit>()
+        serviceReady = ready
+        mutable.value = state.value.copy(taskId = id)
+        runTask {
+            withTimeout(SCHEDULE_SERVICE_START_TIMEOUT_MS) { ready.await() }
+            if (withTimeoutOrNull(SCHEDULE_IMPORT_TIMEOUT_MS) { action(); true } == null) {
+                pause("导入超过 30 分钟，已暂停；进度保留，请手动继续")
+            }
+        }
+        try {
+            // Request while the initiating Activity is visible, before waiting for any school response.
+            if (startService == null) serviceStarted(id) else startService.invoke(id)
+        } catch (_: Exception) {
+            pauseTask(id, "导入服务无法启动，进度保留；请返回 App 手动重试")
+        }
+    }
+
     private fun runTask(replace: Boolean = false, action: suspend () -> Unit) {
         if (!replace && job != null) return
         val token = ++generation
@@ -171,7 +222,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
             try { action() }
             catch (_: TimeoutCancellationException) {
                 // An operation's deadline can expire while this import task is still active.
-                // Explicit pause/background cancellation must keep its own state and message.
+                // Explicit cancellation must keep its own state and message.
                 currentCoroutineContext().ensureActive()
                 fail(token, ScheduleProblem.CONNECTION)
             }
@@ -185,8 +236,9 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
             scope.launch {
                 if (job === owned) {
                     job = null
+                    serviceReady = null
                     val data = if (state.value.blocked) state.value.data else runCatching { repository.snapshot() }.getOrDefault(state.value.data)
-                    mutable.value = state.value.copy(busy = false, loading = false, data = data)
+                    mutable.value = state.value.copy(busy = false, loading = false, data = data, taskId = null)
                 }
             }
         } }

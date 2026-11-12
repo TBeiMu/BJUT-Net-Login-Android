@@ -14,6 +14,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import io.github.tbeimu.gongxiaozhu.network.CampusLoginRuntime
 import io.github.tbeimu.gongxiaozhu.network.CampusLoginService
+import io.github.tbeimu.gongxiaozhu.schedule.ScheduleImportService
 import io.github.tbeimu.gongxiaozhu.ui.AppViewModel
 import io.github.tbeimu.gongxiaozhu.ui.GongXiaoZhuApp
 
@@ -21,6 +22,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var model: AppViewModel
     private var openUpdatesRequest by mutableIntStateOf(0)
     private var openLoginRequest by mutableIntStateOf(0)
+    private var openScheduleRequest by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,7 +36,7 @@ class MainActivity : ComponentActivity() {
         }
         model = ViewModelProvider(this, factory)[AppViewModel::class.java]
         handleUpdateIntent(intent)
-        setContent { GongXiaoZhuApp(model, openUpdatesRequest, openLoginRequest) }
+        setContent { GongXiaoZhuApp(model, openUpdatesRequest, openLoginRequest, openScheduleRequest) }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -44,6 +46,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleUpdateIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(ScheduleImportService.OPEN_SCHEDULE, false) == true) {
+            openScheduleRequest++
+            intent.removeExtra(ScheduleImportService.OPEN_SCHEDULE)
+        }
         if (intent?.getBooleanExtra(CampusLoginService.OPEN_LOGIN, false) == true) {
             openLoginRequest++
             intent.removeExtra(CampusLoginService.OPEN_LOGIN)

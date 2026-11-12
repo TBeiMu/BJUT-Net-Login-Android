@@ -120,7 +120,7 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
         // A fixed-height header: the campus notice may replace the week title without moving the grid.
         Row(Modifier.fillMaxWidth().heightIn(min = 76.dp).padding(start = 18.dp, end = 6.dp, top = 10.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f).align(Alignment.Top)) {
                 // In the current week the small line answers "what now?"; elsewhere it gives the dates.
                 val live = schedule?.takeIf { weekNumber == currentWeek }?.weeks?.getOrNull(weekNumber - 1)
                     ?.let { todayStatus(it, today.value, now) }
@@ -260,7 +260,8 @@ internal val Clock = DateTimeFormatter.ofPattern("HH:mm")
 @Composable
 private fun StatusLine(status: DayStatus) {
     val palette = gxz
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(Modifier.testTag("schedule_overline"), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         if (status.state != DayState.QUIET) Box(Modifier.size(6.dp).clip(CircleShape)
             .background(if (status.state == DayState.IN_CLASS) palette.accent else palette.ink))
         Text(status.text, style = MaterialTheme.typography.labelMedium,

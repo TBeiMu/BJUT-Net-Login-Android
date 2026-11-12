@@ -29,6 +29,7 @@ class ScheduleCancelUiTest {
                 clear();begin(identity,term);append(week(1));append(week(2));previous=finish(1).complete!!
                 begin(identity,term);append(week(1))
             }
+            reloadScheduleFixture(context)
         }
         override fun after(){
             val context=InstrumentationRegistry.getInstrumentation().targetContext
@@ -47,6 +48,7 @@ class ScheduleCancelUiTest {
     }
     @Test fun pausedImportCanKeepProgressOrCancelFromSchedule(){
         ready()
+        compose.onNodeWithTag("schedule_mode").performClick()
         compose.onNodeWithTag("cancel_schedule_import").assertIsDisplayed().performClick()
         compose.onNodeWithText("保留进度").performClick()
         assertNotNull(model().state.value.schedule.data.pending)

@@ -78,7 +78,7 @@ private fun MyGroup(entries: List<MyDestination>, checkingUpdates: Boolean, onOp
             if (index > 0) HorizontalDivider(Modifier.padding(start = 68.dp, end = 20.dp), thickness = .7.dp, color = palette.hairline)
             val interaction = remember { MutableInteractionSource() }
             val pressed by interaction.collectIsPressedAsState()
-            // Pressing a row leans it toward its destination: the icon gives, the chevron steps forward.
+            // Navigation rows lean toward their destination; the update action keeps its arrow fixed.
             val lean by animateFloatAsState(if (pressed) 1f else 0f, if (pressed) spring(stiffness = 900f) else Motion.bouncy(),
                 label = "条目按压")
             Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
@@ -88,10 +88,14 @@ private fun MyGroup(entries: List<MyDestination>, checkingUpdates: Boolean, onOp
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 GlyphChip(entry.glyph, Modifier.graphicsLayer { val s = 1 - lean * .1f; scaleX = s; scaleY = s })
                 Text(entry.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = palette.ink)
-                androidx.compose.animation.Crossfade(checking, label = "检查更新进度") { busy ->
-                    if (busy) BrandLoader(Modifier.size(22.dp).testTag("my_update_checking"))
-                    else LineGlyph(AppGlyph.CHEVRON, Modifier.size(15.dp).graphicsLayer { translationX = lean * 4.dp.toPx() },
-                        palette.inkFaint.copy(alpha = .7f + lean * .3f))
+                androidx.compose.animation.Crossfade(checking, modifier = Modifier.size(22.dp), label = "检查更新进度") { busy ->
+                    // Both crossfade layers occupy the same slot, including the last outgoing frame.
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        if (busy) BrandLoader(Modifier.size(22.dp).testTag("my_update_checking"))
+                        else LineGlyph(AppGlyph.CHEVRON, Modifier.size(15.dp).testTag("my_${entry.name}_chevron")
+                            .graphicsLayer { translationX = if (entry == MyDestination.UPDATES) 0f else lean * 4.dp.toPx() },
+                            palette.inkFaint.copy(alpha = .7f + lean * .3f))
+                    }
                 }
             }
         }

@@ -164,7 +164,7 @@ class ScheduleControllerTest {
         controller.networkChanged(connection(first)); controller.enterForeground(); controller.start(); runCurrent()
         controller.submit("demo-token", emptyMap()); runCurrent()
         assertEquals(1, controller.state.value.data.pending!!.weeks.size)
-        controller.leaveForeground(); runCurrent()
+        controller.pause(); runCurrent()
         assertTrue(first.closed); assertNull(controller.state.value.page); assertNull(controller.state.value.data.complete)
         val next = Session()
         controller.networkChanged(connection(next)); controller.enterForeground(); runCurrent()
@@ -265,7 +265,7 @@ class ScheduleControllerTest {
         val first=Session().apply { gate=CompletableDeferred() }
         controller.networkChanged(connection(first));controller.enterForeground();controller.start();runCurrent()
         controller.submit("demo-token",emptyMap());runCurrent()
-        controller.leaveForeground();runCurrent()
+        controller.pause();runCurrent()
         assertTrue(controller.state.value.canCancelImport)
         controller.cancelImport();controller.cancelImport();runCurrent()
         assertTrue(first.closed);assertNull(controller.state.value.data.pending)

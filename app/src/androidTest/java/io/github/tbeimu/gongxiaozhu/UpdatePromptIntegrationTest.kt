@@ -115,7 +115,8 @@ class UpdatePromptIntegrationTest {
     @Test fun manualFailureInMineShowsReasonAndCheckingDisablesRepeatedClicks() {
         compose.onNodeWithText("我的", substring = false).performClick()
         compose.onNodeWithTag("my_UPDATES").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithTag("my_update_checking").assertIsDisplayed()
+        // The clickable row merges child semantics; inspect the rendered progress child itself.
+        compose.onNodeWithTag("my_update_checking", useUnmergedTree = true).assertIsDisplayed()
         compose.runOnUiThread { source.fail = true; source.gate.complete(Unit) }
         compose.waitUntil(5000) { repository.state.value.phase != UpdatePhase.CHECKING }
         compose.onNodeWithText("虚构连接错误").assertDoesNotExist()

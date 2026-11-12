@@ -25,6 +25,7 @@ class ScheduleImportUiTest {
         override fun before() {
             val c = InstrumentationRegistry.getInstrumentation().targetContext
             check(c.packageName.endsWith(".debug")); createAccountRepository(c).reset(); createScheduleRepository(c).clear()
+            reloadScheduleFixture(c)
         }
         override fun after() {
             val c = InstrumentationRegistry.getInstrumentation().targetContext
@@ -66,6 +67,7 @@ class ScheduleImportUiTest {
         compose.runOnUiThread { webViews().single().evaluateJavascript("document.querySelector('[name=username]').value='graduate-fixture';document.querySelector('[name=password]').value='fake-entered-password';document.querySelector('form').requestSubmit();", null) }
         compose.waitUntil(10_000) { model.state.value.schedule.data.complete != null && !model.state.value.schedule.busy }
         compose.onNodeWithText("学校统一身份认证").assertDoesNotExist()
+        compose.onNodeWithTag("schedule_mode").performClick()
         compose.onNodeWithTag("schedule_pager").assertExists()
         assertEquals(1, submits); assertTrue(closed)
         val cache = AndroidScheduleStore(compose.activity).read()!!

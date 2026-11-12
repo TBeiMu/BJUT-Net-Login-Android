@@ -97,7 +97,8 @@ internal enum class Tab(val title: String) {
 }
 
 @Composable
-fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRequest: Int = 0) = GongXiaoZhuTheme {
+fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRequest: Int = 0,
+    openScheduleRequest: Int = 0) = GongXiaoZhuTheme {
     val state by model.state.collectAsStateWithLifecycle()
     val updateActions = rememberUpdateActions()
     val updates by updateActions.repository.state.collectAsStateWithLifecycle()
@@ -123,6 +124,9 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     }
     LaunchedEffect(openLoginRequest) {
         if (openLoginRequest > 0) open(MyDestination.NETWORK, Tab.MY)
+    }
+    LaunchedEffect(openScheduleRequest) {
+        if (openScheduleRequest > 0) { destination = null; tab = Tab.SCHEDULE }
     }
     BackHandler(enabled = destination != null) { back() }
 

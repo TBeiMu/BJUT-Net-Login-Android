@@ -15,13 +15,11 @@ import io.github.tbeimu.gongxiaozhu.billing.BillingController
 import io.github.tbeimu.gongxiaozhu.billing.BillingUiState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import io.github.tbeimu.gongxiaozhu.schedule.ScheduleController
 import io.github.tbeimu.gongxiaozhu.schedule.ScheduleUiState
 
 data class AppUiState(
@@ -46,8 +44,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
 
     private val loginController = runtime.controller
     val connectionNotice = runtime.connectionNotice
-    val scheduleController = ScheduleController(viewModelScope, runtime.schedules)
-    private var scheduleMonitoring: Job? = null
+    val scheduleController = runtime.scheduleImport.controller
 
     private val billingController = BillingController(viewModelScope,
         credentials = { id -> withContext(Dispatchers.IO) { repository.credentialsForLogin(id) } },
@@ -86,15 +83,10 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
         runtime.enterForeground()
         billingWifiObserved(runtime.connections.value)
         billingController.enterForeground()
-        scheduleController.enterForeground()
-        if (scheduleMonitoring == null) {
-            scheduleMonitoring = viewModelScope.launch { runtime.scheduleConnections.collect(scheduleController::networkChanged) }
-        }
+        runtime.scheduleImport.enterForeground()
     }
     fun leaveForeground() {
-        scheduleController.leaveForeground()
-        scheduleMonitoring?.cancel(); scheduleMonitoring = null
-        scheduleController.networkObservationPaused()
+        runtime.scheduleImport.leaveForeground()
         runtime.leaveForeground(); billingController.leaveForeground()
     }
     fun login() { if (!state.value.busy && state.value.editor == null) loginController.login() }
