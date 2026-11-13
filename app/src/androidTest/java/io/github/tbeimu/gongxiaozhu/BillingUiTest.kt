@@ -143,6 +143,9 @@ class BillingUiTest {
             val original = fixed.associateWith(::bounds)
             val status = compose.onNodeWithTag("billing_status_area").fetchSemanticsNode().boundsInRoot
             val accountBounds = compose.onNodeWithTag("billing_account").fetchSemanticsNode().boundsInRoot
+            val accountLayout = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose.onNodeWithTag("billing_account").performSemanticsAction(
+                androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { get -> assertTrue(get(accountLayout)) }
             assertTrue(status.left >= accountBounds.right)
             assertTrue(status.bottom <= bounds("metric_可用流量").first.y)
             val notices = listOf(true to "正在查询", true to "正在准备登录页", false to "查询完成") +
@@ -158,6 +161,8 @@ class BillingUiTest {
                         val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
                         assertTrue(get(results))
                         val layout = results.single()
+                        assertEquals(accountLayout.single().layoutInput.style.fontSize, layout.layoutInput.style.fontSize)
+                        assertEquals(accountLayout.single().layoutInput.style.lineHeight, layout.layoutInput.style.lineHeight)
                         // Content-sized Text can retain a wider paragraph; check painted lines instead of unused layout width.
                         for (line in 0 until layout.lineCount) {
                             assertFalse("字号 $scale 省略提示「$message」", layout.isLineEllipsized(line))

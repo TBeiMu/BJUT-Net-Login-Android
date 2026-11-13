@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -47,8 +48,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
 import io.github.tbeimu.gongxiaozhu.billing.BillingMetric
@@ -160,24 +161,30 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
 
 @Composable
 private fun BillingHeader(account: String, message: String, running: Boolean, modifier: Modifier) {
-    val statusStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodySmall).copy(fontSize = 11.sp, lineHeight = 16.sp)
-    // Empty/Latin text and wrapped CJK text can have different fallback-font metrics, especially with font scaling.
-    val statusPixels = rememberTextMeasurer().measure("查询 WiFi\n查询 WiFi", statusStyle, maxLines = 2).size.height
-    val statusHeight = maxOf(48.dp, with(LocalDensity.current) { statusPixels.toDp() })
+    val statusStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodyMedium)
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
     Column(modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 20.dp, bottom = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("校园网资费", style = MaterialTheme.typography.headlineLarge, color = gxz.ink,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Text(account, Modifier.weight(1f).testTag("billing_account"), style = MaterialTheme.typography.bodyMedium,
+            Text(account, Modifier.weight(1f).testTag("billing_account"), style = statusStyle,
                 color = gxz.inkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            // Reserve two text lines and the loader slot even when idle, so status changes cannot move the actions.
-            Row(Modifier.weight(1f).height(statusHeight).testTag("billing_status_area"), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End)) {
-                Box(Modifier.size(22.dp).testTag("billing_status_loader")) { if (running) BrandLoader(Modifier.fillMaxSize()) }
-                Text(message, Modifier.testTag("billing_status"), style = statusStyle,
-                    color = gxz.inkSoft, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Start)
+            BoxWithConstraints(Modifier.weight(1f)) {
+                val textWidth = (constraints.maxWidth - with(density) { 22.dp.roundToPx() + 4.dp.roundToPx() }).coerceAtLeast(1)
+                // Reserve for a longest compact hint, independently of the current message, at the shared font size.
+                val lines = maxOf(2, measurer.measure("已注销，刷新失败，请重查", statusStyle,
+                    constraints = Constraints(maxWidth = textWidth)).lineCount)
+                val statusPixels = measurer.measure(List(lines) { "查询 WiFi" }.joinToString("\n"), statusStyle).size.height
+                val statusHeight = maxOf(48.dp, with(density) { statusPixels.toDp() })
+                Row(Modifier.fillMaxWidth().height(statusHeight).testTag("billing_status_area"), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End)) {
+                    Box(Modifier.size(22.dp).testTag("billing_status_loader")) { if (running) BrandLoader(Modifier.fillMaxSize()) }
+                    Text(message, Modifier.testTag("billing_status"), style = statusStyle,
+                        color = gxz.inkSoft, maxLines = lines, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Start)
+                }
             }
         }
     }
