@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,11 +71,15 @@ import io.github.tbeimu.gongxiaozhu.schedule.CourseBlock
 import io.github.tbeimu.gongxiaozhu.schedule.ScheduleCourse
 import io.github.tbeimu.gongxiaozhu.schedule.ScheduleUiState
 import io.github.tbeimu.gongxiaozhu.schedule.SemesterSchedule
+import io.github.tbeimu.gongxiaozhu.schedule.DisplaySchedule
+import io.github.tbeimu.gongxiaozhu.schedule.display
 import io.github.tbeimu.gongxiaozhu.schedule.courseBlocks
 import io.github.tbeimu.gongxiaozhu.schedule.scheduleToday
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.abs
 
 private val DayNames = listOf("一", "二", "三", "四", "五", "六", "日")
@@ -88,17 +93,18 @@ private val AgendaShape = RoundedCornerShape(20.dp)
 internal fun ScheduleHome(state: ScheduleUiState, modifier: Modifier, onImport: () -> Unit, onPause: () -> Unit,
     onRetry: () -> Unit, onMine: () -> Unit, todayProvider: () -> LocalDate = ::scheduleToday,
     connectionNotice: CampusConnectionNotice? = null, titleUnobstructed: Boolean = true, onCancelImport: () -> Unit = {},
-    onDialogVisibilityChanged: (Boolean) -> Unit = {}, nowProvider: () -> LocalTime = ::scheduleNow) {
+    onDialogVisibilityChanged: (Boolean) -> Unit = {}, nowProvider: () -> LocalTime = ::scheduleNow,
+    onAddCourse: (Int, Int) -> Unit = { _, _ -> }, onEditCourse: (ScheduleCourse, Boolean) -> Unit = { _, _ -> }) {
     var week by rememberSaveable { mutableStateOf(false) }
-    val schedule = state.data.complete
+    val schedule = remember(state.data) { state.data.display() }
     // Switched in one frame, never cross-faded: only one view may own the campus notice title.
     Box(modifier.fillMaxSize()) {
         // While the encrypted timetable is being read: the mark, not an empty page that flickers.
         if (state.loading) { BrandLoader(Modifier.size(64.dp).align(Alignment.Center)); return@Box }
         if (!week && schedule != null && !state.blocked) TodayScreen(state, schedule, onImport, onPause, onCancelImport,
-            todayProvider, nowProvider, connectionNotice, titleUnobstructed, onDialogVisibilityChanged)
+            todayProvider, nowProvider, connectionNotice, titleUnobstructed, onDialogVisibilityChanged, onAddCourse, onEditCourse)
         else ScheduleScreen(state, Modifier.fillMaxSize(), onImport, onPause, onRetry, onMine, todayProvider, connectionNotice,
-            titleUnobstructed, onCancelImport, onDialogVisibilityChanged, nowProvider)
+            titleUnobstructed, onCancelImport, onDialogVisibilityChanged, nowProvider, onAddCourse, onEditCourse)
         if (schedule != null && !state.blocked) ModeSwitch(week, Modifier.align(Alignment.BottomEnd)
             .padding(end = 20.dp, bottom = 18.dp)) { week = !week }
     }
@@ -134,9 +140,10 @@ internal fun PlainIconButton(onClick: () -> Unit, modifier: Modifier = Modifier,
 private enum class CardState { PAST, LIVE, NEXT, AHEAD }
 
 @Composable
-private fun TodayScreen(state: ScheduleUiState, schedule: SemesterSchedule, onImport: () -> Unit, onPause: () -> Unit,
+private fun TodayScreen(state: ScheduleUiState, schedule: DisplaySchedule, onImport: () -> Unit, onPause: () -> Unit,
     onCancelImport: () -> Unit, todayProvider: () -> LocalDate, nowProvider: () -> LocalTime,
-    notice: CampusConnectionNotice?, titleUnobstructed: Boolean, onDialogVisibilityChanged: (Boolean) -> Unit) {
+    notice: CampusConnectionNotice?, titleUnobstructed: Boolean, onDialogVisibilityChanged: (Boolean) -> Unit,
+    onAddCourse: (Int, Int) -> Unit, onEditCourse: (ScheduleCourse, Boolean) -> Unit) {
     val today = rememberScheduleDate(todayProvider)
     val now by rememberScheduleTime(nowProvider)
     val palette = gxz
@@ -146,14 +153,16 @@ private fun TodayScreen(state: ScheduleUiState, schedule: SemesterSchedule, onIm
     val home = today.value.toString().takeIf { it in termDays }
         ?: schedule.weeks.getOrNull(schedule.term.currentWeek - 1)?.dates?.firstOrNull() ?: schedule.weeks.first().dates.first()
     // null follows today's clock, including after restoration; explicit browsing keeps its date.
-    var chosen by rememberSaveable(schedule.identity.studentId, schedule.term.key) { mutableStateOf<String?>(null) }
+    var chosen by rememberSaveable(schedule.key, schedule.term.key) { mutableStateOf<String?>(null) }
     val selected = LocalDate.parse(chosen?.takeIf { it in termDays } ?: home)
     val week = schedule.weeks.firstOrNull { selected.toString() in it.dates } ?: schedule.weeks.first()
     var details by remember(schedule) { mutableStateOf<List<ScheduleCourse>?>(null) }
     var cancelConfirmation by remember { mutableStateOf(false) }
+    var addMenu by remember { mutableStateOf(false) }
+    val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     LaunchedEffect(state.canCancelImport) { if (!state.canCancelImport) cancelConfirmation = false }
-    ReportDialogVisibility(details != null || (state.canCancelImport && cancelConfirmation), onDialogVisibilityChanged)
-    val spin = rememberSpin(state.busy)
+    ReportDialogVisibility(addMenu || details != null || (state.canCancelImport && cancelConfirmation), onDialogVisibilityChanged)
+    LaunchedEffect(titleUnobstructed, state.busy, lifecycle) { if (!titleUnobstructed || state.busy || !lifecycle.isAtLeast(Lifecycle.State.RESUMED)) addMenu = false }
     val haptic = LocalHapticFeedback.current
     fun select(date: LocalDate) {
         if (date.toString() !in termDays) return
@@ -171,16 +180,15 @@ private fun TodayScreen(state: ScheduleUiState, schedule: SemesterSchedule, onIm
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f).testTag("schedule_week_title")) {
                     CampusConnectionTitle("周${DayNames[selected.dayOfWeek.value - 1]}", notice,
-                        titleUnobstructed && details == null && !(state.canCancelImport && cancelConfirmation),
+                        titleUnobstructed && !addMenu && details == null && !(state.canCancelImport && cancelConfirmation),
                         headline = TextStyle(fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-.8).sp))
                 }
                 val lessons = blocks.sumOf { it.last - it.first + 1 }
                 Text(if (lessons == 0) "没有课" else "共 $lessons 节", style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.sp),
                     color = palette.inkFaint)
-                PlainIconButton(onClick = onImport, enabled = !state.busy && !state.loading,
-                    modifier = Modifier.testTag("import_schedule").semantics { contentDescription = "刷新课表" }) {
-                    LineGlyph(AppGlyph.REFRESH, Modifier.size(20.dp).graphicsLayer { rotationZ = spin })
-                }
+                ScheduleAddButton(addMenu, !state.busy && !state.loading && titleUnobstructed,
+                    { addMenu = it; details = null; cancelConfirmation = false }, onImport,
+                    { onAddCourse(week.number, selected.dayOfWeek.value) })
             }
         }
         WeekStrip(week.dates.map(LocalDate::parse), selected, today.value, schedule, toneOrder, ::select)
@@ -190,7 +198,8 @@ private fun TodayScreen(state: ScheduleUiState, schedule: SemesterSchedule, onIm
         }
         // A sideways swipe moves a day; the page follows in the same direction.
         val threshold = with(LocalDensity.current) { 64.dp.toPx() }
-        Box(Modifier.weight(1f).fillMaxWidth().pointerInput(selected, termDays, threshold) {
+        Box(Modifier.weight(1f).fillMaxWidth().pointerInput(selected, termDays, threshold, addMenu, titleUnobstructed, details, cancelConfirmation) {
+            if (addMenu || !titleUnobstructed || details != null || cancelConfirmation) return@pointerInput
             var distance = 0f
             detectHorizontalDragGestures(onDragStart = { distance = 0f }, onHorizontalDrag = { change, delta ->
                 change.consume(); distance += delta
@@ -203,14 +212,15 @@ private fun TodayScreen(state: ScheduleUiState, schedule: SemesterSchedule, onIm
                     (slideOutHorizontally(tween(Motion.MEDIUM, easing = Motion.Accelerate)) { if (forward) -it / 6 else it / 6 } +
                         fadeOut(tween(Motion.SHORT)))
             }, label = "切换日期") { date ->
-                DayAgenda(date, schedule, today.value, now, toneOrder) { details = it; onDialogVisibilityChanged(true) }
+                DayAgenda(date, schedule, today.value, now, toneOrder) { if (!addMenu && titleUnobstructed) { details = it; onDialogVisibilityChanged(true) } }
             }
         }
     }
-    details?.let { CourseDetails(it, toneOrder) { details = null; onDialogVisibilityChanged(cancelConfirmation && state.canCancelImport) } }
+    details?.let { CourseDetails(it, toneOrder, onDismiss = { details = null }, editable = !state.busy,
+        onEdit = { course, delete -> details = null; onEditCourse(course, delete) }) }
 }
 
-private fun dayBlocks(schedule: SemesterSchedule, date: LocalDate): List<CourseBlock> {
+private fun dayBlocks(schedule: DisplaySchedule, date: LocalDate): List<CourseBlock> {
     val week = schedule.weeks.firstOrNull { date.toString() in it.dates } ?: return emptyList()
     val day = week.dates.indexOf(date.toString())
     return courseBlocks(week).filter { it.day == day }.sortedBy { it.first }
@@ -218,7 +228,7 @@ private fun dayBlocks(schedule: SemesterSchedule, date: LocalDate): List<CourseB
 
 /** Seven days in a row; a dark tile glides to the chosen one. Dots preview each day's classes. */
 @Composable
-private fun WeekStrip(dates: List<LocalDate>, selected: LocalDate, today: LocalDate, schedule: SemesterSchedule,
+private fun WeekStrip(dates: List<LocalDate>, selected: LocalDate, today: LocalDate, schedule: DisplaySchedule,
     toneOrder: Map<String, Int>, onSelect: (LocalDate) -> Unit) {
     val palette = gxz
     BoxWithConstraints(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 4.dp)) {
@@ -254,7 +264,7 @@ private fun WeekStrip(dates: List<LocalDate>, selected: LocalDate, today: LocalD
 }
 
 @Composable
-private fun DayAgenda(date: LocalDate, schedule: SemesterSchedule, today: LocalDate, now: LocalTime,
+private fun DayAgenda(date: LocalDate, schedule: DisplaySchedule, today: LocalDate, now: LocalTime,
     toneOrder: Map<String, Int>, onCourse: (List<ScheduleCourse>) -> Unit) {
     val palette = gxz
     val blocks = remember(schedule, date) { dayBlocks(schedule, date) }
@@ -365,7 +375,7 @@ private fun Gap(from: LocalTime, to: LocalTime) {
 }
 
 @Composable
-private fun EmptyDay(date: LocalDate, isToday: Boolean, schedule: SemesterSchedule) {
+private fun EmptyDay(date: LocalDate, isToday: Boolean, schedule: DisplaySchedule) {
     val palette = gxz
     // Point to the next class, so an empty day still answers "when do I next need to be somewhere?"
     val upcoming = remember(schedule, date) {
@@ -385,7 +395,7 @@ private fun EmptyDay(date: LocalDate, isToday: Boolean, schedule: SemesterSchedu
 }
 
 @Composable
-private fun Tomorrow(date: LocalDate, schedule: SemesterSchedule, toneOrder: Map<String, Int>, modifier: Modifier) {
+private fun Tomorrow(date: LocalDate, schedule: DisplaySchedule, toneOrder: Map<String, Int>, modifier: Modifier) {
     val palette = gxz
     val blocks = remember(schedule, date) { dayBlocks(schedule, date) }
     Column(modifier.fillMaxWidth().padding(top = 18.dp)) {

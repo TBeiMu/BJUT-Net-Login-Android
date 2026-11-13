@@ -113,7 +113,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     var deleting by remember { mutableStateOf<AccountSummary?>(null) }
     var resetting by remember { mutableStateOf(false) }
     val updateUnobstructed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED) && !localDialogVisible &&
-        state.schedule.page == null && state.editor == null && !resetSchedule && !resetting && deleting == null &&
+        state.schedule.page == null && state.editor == null && state.courseEditor == null && !resetSchedule && !resetting && deleting == null &&
         state.billing.webPage == null && !state.billing.offerWeb && state.billing.confirmation == null
     val updateDialogVisible = updateUnobstructed && (updates.prompt != null || updates.mobileConfirmation != null)
     LaunchedEffect(openUpdatesRequest) {
@@ -160,9 +160,11 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                         { open(MyDestination.SCHEDULE, Tab.SCHEDULE) }, connectionNotice = model.connectionNotice,
                         titleUnobstructed = state.schedule.page == null && state.editor == null && !resetSchedule &&
                             !resetting && deleting == null && state.billing.webPage == null && !state.billing.offerWeb &&
-                            state.billing.confirmation == null && !updateDialogVisible,
+                            state.billing.confirmation == null && state.courseEditor == null && !updateDialogVisible,
                         onCancelImport = model.scheduleController::cancelImport,
-                        onDialogVisibilityChanged = { localDialogVisible = it })
+                        onDialogVisibilityChanged = { localDialogVisible = it },
+                        onAddCourse = { week, day -> model.editCourse(week = week, weekday = day) },
+                        onEditCourse = { course, delete -> model.editCourse(course, deleteOnly = delete) })
                 }
                 Tab.BILLING -> if (state.storageBlocked) Column(Modifier.padding(padding).padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -195,7 +197,8 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     }
     if (resetSchedule) AlertDialog(onDismissRequest = { resetSchedule = false },
         title = { Text("清除课表绑定和缓存？") },
-        text = { Text("本机已导入课表和未完成进度会被清除，可重新登录其他课表账号。校园网账号、密码和设置会保留。") },
+        text = { Text(if (state.schedule.blocked) "损坏的课表缓存会被清除，可重新导入。校园网账号、密码和设置会保留。"
+            else "学校课表和未完成进度会被清除，自定义课程保留。可重新登录其他课表账号。") },
         confirmButton = { TextButton(onClick = { resetSchedule = false; model.scheduleController.clear() }) { Text("确认清除课表") } },
         dismissButton = { TextButton(onClick = { resetSchedule = false }) { Text("取消") } })
     state.schedule.page?.let { page -> ScheduleWebDialog(page, state.schedule.busy, state.schedule.message,
@@ -205,6 +208,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     state.editor?.let { draft ->
         AccountEditor(draft, state.busy, state.editorError, onDismiss = model::closeEditor, onSave = model::saveAccount)
     }
+    state.courseEditor?.let { CourseEditor(it, state.courseSaving, state.courseError, model::closeCourseEditor, model::saveCourse) }
     if (state.billing.offerWeb) {
         AlertDialog(onDismissRequest = model::dismissWebOffer,
             title = { Text("自动查询登录未完成") },

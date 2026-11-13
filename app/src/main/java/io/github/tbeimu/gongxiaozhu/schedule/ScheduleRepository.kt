@@ -44,7 +44,14 @@ class ScheduleRepository(private val store: VaultStore, private val cipher: Vaul
     @Synchronized fun finish(now: Long): ScheduleData {
         val data = requireLoaded(); val p = data.pending ?: throw ScheduleException(ScheduleProblem.RESPONSE)
         requireComplete(p.weeks, p.term)
-        return persist(data.copy(complete = SemesterSchedule(p.identity, p.term, p.weeks.sortedBy { it.number }, now), pending = null))
+        // Only the first standalone calendar is adopted; archived terms never silently move to a new account/semester.
+        val adopt = if (data.localTerms.none { it.studentId == p.identity.studentId && it.schoolTermKey == p.term.key })
+            data.localTerms.firstOrNull { it.adoptOnImport }?.id else null
+        val locals = data.localTerms.map { if (it.id == adopt || (it.studentId == p.identity.studentId && it.schoolTermKey == p.term.key)) it.copy(studentId = p.identity.studentId,
+            schoolTermKey = p.term.key, firstMonday = p.weeks.minBy { w -> w.number }.dates.first(),
+            weekCount = p.term.weekCount, title = p.term.title, adoptOnImport = false) else it }
+        return persist(data.copy(complete = SemesterSchedule(p.identity, p.term, p.weeks.sortedBy { it.number }, now),
+            pending = null, localTerms = locals, selectedLocalTermId = null))
     }
 
     /** Discard only the unfinished attempt; keep the bound identity, complete semester and key. */
@@ -53,6 +60,19 @@ class ScheduleRepository(private val store: VaultStore, private val cipher: Vaul
         return if (data.pending == null) data else persist(data.copy(pending = null))
     }
 
+    @Synchronized fun edit(context: CourseEditContext, draft: CourseDraft): ScheduleData = persist(requireLoaded().editCourse(context, draft))
+    @Synchronized fun selectLocalTerm(id: String?): ScheduleData {
+        val data = requireLoaded()
+        if (id != null && data.localTerms.none { it.id == id }) throw CourseValidationException("本地学期不存在")
+        return persist(data.copy(selectedLocalTermId = id))
+    }
+    /** Ordinary unbinding preserves local terms; explicit damaged-cache recovery still clears the unreadable file. */
+    @Synchronized fun unbind(): ScheduleData {
+        val data = requireLoaded()
+        return persist(data.copy(identity = null, complete = null, pending = null,
+            localTerms = data.localTerms.map { it.copy(adoptOnImport = false) },
+            selectedLocalTermId = data.selectedLocalTermId ?: data.localTerms.lastOrNull()?.id))
+    }
     @Synchronized fun clear(): ScheduleData = storage {
         store.clear(); cipher.clearKey()
         exists = false
@@ -78,15 +98,18 @@ class ScheduleRepository(private val store: VaultStore, private val cipher: Vaul
     }
     private fun validate(data: ScheduleData) {
         require(data.schema == 1)
+        validateLocalTerms(data)
         data.identity?.let(::validateIdentity)
         data.complete?.let {
             require(it.identity.studentId == data.identity?.studentId)
             validateTerm(it.term); requireComplete(it.weeks, it.term)
+            require(it.weeks.all { week -> week.courses.all { c -> c.source == CourseSource.SCHOOL } })
         }
         data.pending?.let {
             require(it.identity.studentId == data.identity?.studentId)
             validateTerm(it.term); require(it.weeks.map { w -> w.number }.distinct().size == it.weeks.size)
             it.weeks.forEach { w -> validateWeek(w); require(w.number <= it.term.weekCount) }
+            require(it.weeks.all { week -> week.courses.all { c -> c.source == CourseSource.SCHOOL } })
         }
     }
     private fun requireComplete(weeks: List<ScheduleWeek>, term: ScheduleTerm) {

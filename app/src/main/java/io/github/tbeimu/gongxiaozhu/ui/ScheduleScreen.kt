@@ -85,18 +85,20 @@ private val Weekdays = listOf("一", "二", "三", "四", "五", "六", "日")
 internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport: () -> Unit,
     onPause: () -> Unit, onRetry: () -> Unit, onMine: () -> Unit, todayProvider: () -> LocalDate = ::scheduleToday,
     connectionNotice: CampusConnectionNotice? = null, titleUnobstructed: Boolean = true, onCancelImport: () -> Unit = {},
-    onDialogVisibilityChanged: (Boolean) -> Unit = {}, nowProvider: () -> LocalTime = ::scheduleNow) {
+    onDialogVisibilityChanged: (Boolean) -> Unit = {}, nowProvider: () -> LocalTime = ::scheduleNow,
+    onAddCourse: (Int, Int) -> Unit = { _, _ -> }, onEditCourse: (ScheduleCourse, Boolean) -> Unit = { _, _ -> }) {
     val today = rememberScheduleDate(todayProvider)
     val now by rememberScheduleTime(nowProvider)
-    val schedule = state.data.complete
-    var selected by rememberSaveable(schedule?.identity?.studentId, schedule?.term?.key) {
+    val schedule = remember(state.data) { state.data.display() }
+    var selected by rememberSaveable(schedule?.key, schedule?.term?.key) {
         mutableIntStateOf(schedule?.let { currentScheduleWeek(it, today.value) ?: it.term.currentWeek } ?: 1)
     }
     var showWeeks by rememberSaveable { mutableStateOf(false) }
     var details by remember(schedule) { mutableStateOf<List<ScheduleCourse>?>(null) }
     var cancelImportConfirmation by remember { mutableStateOf(false) }
+    var addMenu by remember { mutableStateOf(false) }
     LaunchedEffect(state.canCancelImport) { if (!state.canCancelImport) cancelImportConfirmation = false }
-    ReportDialogVisibility(details != null || (state.canCancelImport && cancelImportConfirmation), onDialogVisibilityChanged)
+    ReportDialogVisibility(addMenu || showWeeks || details != null || (state.canCancelImport && cancelImportConfirmation), onDialogVisibilityChanged)
     val latestSelected by rememberUpdatedState<(Int) -> Unit>({ selected = it })
     val pagerScope = rememberCoroutineScope()
     val pager = remember(schedule) { schedule?.let {
@@ -104,7 +106,8 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
     } }
     DisposableEffect(pager) { onDispose { pager?.dispose() } }
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
-    val interactive = lifecycle.isAtLeast(Lifecycle.State.RESUMED) && titleUnobstructed && !showWeeks &&
+    LaunchedEffect(titleUnobstructed, state.busy, lifecycle) { if (!titleUnobstructed || state.busy || !lifecycle.isAtLeast(Lifecycle.State.RESUMED)) { addMenu = false; showWeeks = false } }
+    val interactive = lifecycle.isAtLeast(Lifecycle.State.RESUMED) && titleUnobstructed && !showWeeks && !addMenu &&
         details == null && !(state.canCancelImport && cancelImportConfirmation) && state.page == null && !state.blocked
     LaunchedEffect(pager, interactive) { if (!interactive) pager?.cancel() }
     val weekNumber = pager?.week ?: 1
@@ -115,7 +118,6 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
     // The first week shown arrives as a wave; later week changes rely on the slide alone.
     var intro by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) { delay(1200); intro = false }
-    val spin = rememberSpin(state.busy)
     Column(modifier.fillMaxSize()) {
         // A fixed-height header: the campus notice may replace the week title without moving the grid.
         Row(Modifier.fillMaxWidth().heightIn(min = 76.dp).padding(start = 18.dp, end = 6.dp, top = 10.dp),
@@ -132,15 +134,13 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
                         indication = null) { showWeeks = !showWeeks }
                     .testTag("schedule_week_title")) {
                     CampusConnectionTitle(if (schedule == null) "我的课表" else "第 $weekNumber 周", connectionNotice,
-                        titleUnobstructed && details == null && !(state.canCancelImport && cancelImportConfirmation))
+                        titleUnobstructed && !addMenu && !showWeeks && details == null && !(state.canCancelImport && cancelImportConfirmation))
                 }
             }
-            PlainIconButton(onClick = onImport, enabled = !state.busy && !state.blocked && !state.loading,
-                modifier = Modifier.testTag("import_schedule").semantics { contentDescription = if (schedule == null) "导入课表" else "刷新课表" }) {
-                LineGlyph(if (schedule == null) AppGlyph.DOWNLOAD else AppGlyph.REFRESH,
-                    Modifier.size(20.dp).graphicsLayer { rotationZ = spin })
-            }
-            PlainIconButton(onClick = { showWeeks = !showWeeks }, enabled = schedule != null,
+            ScheduleAddButton(addMenu, !state.busy && !state.blocked && !state.loading && titleUnobstructed,
+                { addMenu = it; showWeeks = false; details = null; cancelImportConfirmation = false }, onImport,
+                { onAddCourse(weekNumber, today.value.dayOfWeek.value) })
+            PlainIconButton(onClick = { addMenu = false; details = null; showWeeks = !showWeeks }, enabled = schedule != null && titleUnobstructed,
                 modifier = Modifier.semantics { contentDescription = "选择周次" }) { LineGlyph(AppGlyph.WEEKS, Modifier.size(20.dp)) }
         }
         ScheduleStatus(state, onPause, onImport, onCancelImport, cancelImportConfirmation) {
@@ -151,8 +151,8 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
             state.blocked -> ScheduleEmpty("课表存储暂不可用", "可以重试读取，或在课表管理中确认清除缓存。", "重试读取课表", onRetry,
                 modifier = Modifier.weight(1f), secondary = onMine)
             schedule == null -> ScheduleEmpty(if (state.data.pending == null) "把这一学期放进口袋" else "整学期尚未导入完成",
-                "通过 WiFi 或移动数据登录一次，自动导入整个学期。", if (state.data.pending == null) "导入研究生课表" else "登录后继续导入",
-                onImport, modifier = Modifier.weight(1f), enabled = !state.busy && !state.loading)
+                "导入学校课表，或添加自己的课程。", "添加课表",
+                { addMenu = true }, modifier = Modifier.weight(1f), enabled = !state.busy && !state.loading)
             else -> Box(Modifier.weight(1f).fillMaxWidth().padding(start = 14.dp, top = 4.dp, bottom = 10.dp).clipToBounds()
                 .testTag("schedule_week_area")) {
                 val gridBackdrop = rememberScheduleBackdrop()
@@ -162,7 +162,7 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
                             details = it; onDialogVisibilityChanged(true)
                         })
                     }
-                    WeekDots(schedule, weekNumber, showWeeks, onExpand = { showWeeks = true })
+                    WeekDots(schedule, weekNumber, showWeeks, onExpand = { addMenu = false; details = null; showWeeks = true })
                 }
                 // The week list floats over the grid, so opening it never reflows the timetable.
                 androidx.compose.animation.AnimatedVisibility(visible = showWeeks, modifier = Modifier.align(Alignment.CenterEnd),
@@ -179,11 +179,12 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
             }
         }
     }
-    details?.let { CourseDetails(it, toneOrder) { details = null; onDialogVisibilityChanged(cancelImportConfirmation && state.canCancelImport) } }
+    details?.let { CourseDetails(it, toneOrder, onDismiss = { details = null }, editable = !state.busy,
+        onEdit = { course, delete -> details = null; onEditCourse(course, delete) }) }
 }
 
 /** The small line above the title: the visible week's dates, or today's date before anything is imported. */
-private fun scheduleOverline(schedule: SemesterSchedule?, weekNumber: Int, currentWeek: Int?, today: LocalDate): String {
+private fun scheduleOverline(schedule: DisplaySchedule?, weekNumber: Int, currentWeek: Int?, today: LocalDate): String {
     if (schedule == null) return "${today.monthValue}月${today.dayOfMonth}日 · 星期${Weekdays[today.dayOfWeek.value - 1]}"
     val dates = schedule.weeks.getOrNull(weekNumber - 1)?.dates?.mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
     if (dates == null || dates.size != 7) return schedule.term.title
@@ -382,7 +383,7 @@ internal fun weekDragDirection(delta: Float): Int = when {
 }
 
 @Composable
-private fun WeekGrid(schedule: SemesterSchedule, pager: WeekPagerState, count: Int, today: LocalDate, now: LocalTime,
+private fun WeekGrid(schedule: DisplaySchedule, pager: WeekPagerState, count: Int, today: LocalDate, now: LocalTime,
     toneOrder: Map<String, Int>, intro: Boolean, interactive: Boolean, onCourse: (List<ScheduleCourse>) -> Unit) {
     val week = schedule.weeks[pager.week - 1]
     val palette = gxz
@@ -573,7 +574,7 @@ private fun CourseCards(week: ScheduleWeek, count: Int, cell: Dp, today: LocalDa
 }
 
 @Composable
-private fun ScheduleDates(schedule: SemesterSchedule, pager: WeekPagerState, today: LocalDate, intro: Boolean) {
+private fun ScheduleDates(schedule: DisplaySchedule, pager: WeekPagerState, today: LocalDate, intro: Boolean) {
     val week = schedule.weeks[pager.week - 1]
     val palette = gxz
     Column(Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
@@ -618,7 +619,7 @@ private fun ScheduleDates(schedule: SemesterSchedule, pager: WeekPagerState, tod
 
 /** Both clipped viewports use this fraction; fixed weekday and time rails are outside the layers. */
 @Composable
-private fun WeekLayers(schedule: SemesterSchedule, pager: WeekPagerState, modifier: Modifier,
+private fun WeekLayers(schedule: DisplaySchedule, pager: WeekPagerState, modifier: Modifier,
     content: @Composable (ScheduleWeek) -> Unit) {
     val visibleWeeks by remember(pager) { derivedStateOf {
         val position = pager.visualPosition
@@ -637,7 +638,7 @@ private fun WeekLayers(schedule: SemesterSchedule, pager: WeekPagerState, modifi
 }
 
 @Composable
-private fun WeekDots(schedule: SemesterSchedule, selected: Int, expanded: Boolean, onExpand: () -> Unit) {
+private fun WeekDots(schedule: DisplaySchedule, selected: Int, expanded: Boolean, onExpand: () -> Unit) {
     val color = gxz.ink
     // The marker travels between dots and stretches while it moves, like a bead on a string.
     val position by animateFloatAsState(selected.toFloat(), Motion.snappy(), label = "周次指示位置")
@@ -660,7 +661,7 @@ private fun WeekDots(schedule: SemesterSchedule, selected: Int, expanded: Boolea
 }
 
 @Composable
-private fun WeekList(schedule: SemesterSchedule, selected: Int, count: Int, enabled: Boolean, onSelect: (Int) -> Unit) {
+private fun WeekList(schedule: DisplaySchedule, selected: Int, count: Int, enabled: Boolean, onSelect: (Int) -> Unit) {
     val palette = gxz
     val list = rememberLazyListState()
     LaunchedEffect(selected) { list.scrollToItem((selected-2).coerceAtLeast(0)) }
@@ -726,7 +727,7 @@ internal fun courseTone(index: Int, dark: Boolean): CourseTone {
 private fun courseKey(course: ScheduleCourse) = course.id.ifBlank { course.name }
 
 /** Hues follow first appearance in the term: one course keeps its colour, neighbours rarely share one. */
-internal fun courseToneOrder(schedule: SemesterSchedule): Map<String, Int> {
+internal fun courseToneOrder(schedule: DisplaySchedule): Map<String, Int> {
     val order = LinkedHashMap<String, Int>()
     schedule.weeks.forEach { week ->
         week.courses.sortedWith(compareBy({ it.date }, { it.lessons.minOrNull() ?: 0 }))
@@ -746,7 +747,8 @@ internal fun overlapTone(dark: Boolean): CourseTone =
 internal fun courseColor(course: ScheduleCourse): Color = courseTone(course, false).strong
 
 @Composable
-internal fun CourseDetails(courses: List<ScheduleCourse>, toneOrder: Map<String, Int>, onDismiss: () -> Unit) {
+internal fun CourseDetails(courses: List<ScheduleCourse>, toneOrder: Map<String, Int>, editable: Boolean = false,
+    onEdit: (ScheduleCourse, Boolean) -> Unit = { _, _ -> }, onDismiss: () -> Unit) {
     val palette = gxz
     AlertDialog(onDismissRequest = onDismiss, title = { Text(if(courses.size>1) "重叠课程 · ${courses.size} 门" else "课程详情") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -762,6 +764,10 @@ internal fun CourseDetails(courses: List<ScheduleCourse>, toneOrder: Map<String,
                     DetailRow("教师", course.teacher.ifBlank { "未提供" }, tone)
                     if(course.timeText.isNotBlank()) DetailRow("时间", course.timeText, tone)
                     if(course.weeksText.isNotBlank()) DetailRow("周次", course.weeksText, tone)
+                    if (editable) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { onEdit(course, false) }) { Text("编辑") }
+                        TextButton(onClick = { onEdit(course, true) }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    }
                 }
             }
         } }, confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
@@ -774,3 +780,5 @@ private fun DetailRow(label: String, value: String, tone: CourseTone) {
         Text(value, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = tone.text)
     }
 }
+
+internal fun courseToneOrder(schedule: SemesterSchedule): Map<String, Int> = courseToneOrder(schedule.display())

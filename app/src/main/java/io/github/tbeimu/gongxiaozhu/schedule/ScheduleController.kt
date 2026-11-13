@@ -178,16 +178,35 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     /** Only invoked after the UI confirms replacement/unbinding or damaged-cache recovery. */
     fun clear() {
         val old = job
+        val damaged = state.value.blocked
         pause()
         runTask(replace = true) {
             old?.join()
-            val data = io { repository.clear() }
+            val data = io { if (damaged) repository.clear() else repository.unbind() }
             mutable.value = ScheduleUiState(data, loading = false, networkKind = network?.kind,
                 message = "课表绑定及缓存已清除，可以重新导入")
         }
     }
     fun unsupportedWebView() { pause(ScheduleProblem.WEBVIEW.hint) }
     fun message(text: String) { mutable.value = state.value.copy(message = text, notice = ScheduleNotice.ERROR) }
+
+    suspend fun editCourse(context: CourseEditContext, draft: CourseDraft) = localWrite { repository.edit(context, draft) }
+    suspend fun selectLocalTerm(id: String?) = localWrite { repository.selectLocalTerm(id) }
+    private suspend fun localWrite(action: () -> ScheduleData) {
+        if (!foreground || job != null || state.value.loading || state.value.blocked || state.value.page != null) {
+            throw CourseValidationException("请等待当前课表任务结束后再操作")
+        }
+        val owned = currentCoroutineContext()[Job]!!
+        job = owned
+        mutable.value = state.value.copy(busy = true)
+        try {
+            awaitClosedSessions()
+            val data = io(action)
+            mutable.value = state.value.copy(data = data)
+        } finally {
+            if (job === owned) { job = null; mutable.value = state.value.copy(busy = false) }
+        }
+    }
 
     /** Only a matching, live in-memory task can be admitted or stopped by a service callback. */
     fun serviceStarted(id: String): Boolean {

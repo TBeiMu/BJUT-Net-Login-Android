@@ -21,6 +21,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.tbeimu.gongxiaozhu.schedule.ScheduleUiState
+import io.github.tbeimu.gongxiaozhu.schedule.CourseEditContext
+import io.github.tbeimu.gongxiaozhu.schedule.CourseDraft
+import io.github.tbeimu.gongxiaozhu.schedule.CourseValidationException
+import io.github.tbeimu.gongxiaozhu.schedule.ScheduleException
+import io.github.tbeimu.gongxiaozhu.schedule.ScheduleCourse
+import io.github.tbeimu.gongxiaozhu.schedule.courseEditor
 
 data class AppUiState(
     val data: AccountState = AccountState(),
@@ -33,6 +39,9 @@ data class AppUiState(
     val login: LoginUiState = LoginUiState(),
     val billing: BillingUiState = BillingUiState(),
     val schedule: ScheduleUiState = ScheduleUiState(),
+    val courseEditor: CourseEditContext? = null,
+    val courseSaving: Boolean = false,
+    val courseError: String? = null,
 ) {
     override fun toString() = "AppUiState(loading=$loading, busy=$busy, storageBlocked=$storageBlocked)"
 }
@@ -47,6 +56,36 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
     val nameWriteFailure = runtime.accountNames.writeFailure
     fun consumeNameWriteFailure() = runtime.accountNames.consumeWriteFailure()
     val scheduleController = runtime.scheduleImport.controller
+
+    fun editCourse(course: ScheduleCourse? = null, week: Int = 1, weekday: Int = java.time.LocalDate.now(
+        java.time.ZoneId.of("Asia/Shanghai")).dayOfWeek.value, localTermId: String? = null, deleteOnly: Boolean = false,
+        newLocalTerm: Boolean = false) {
+        val schedule = scheduleController.state.value
+        if (schedule.loading || schedule.busy || schedule.blocked || schedule.page != null || state.value.courseSaving) return
+        mutable.update { it.copy(courseEditor = schedule.data.courseEditor(course, week, weekday, localTermId, deleteOnly, newLocalTerm), courseError = null) }
+    }
+    fun closeCourseEditor() { if (!state.value.courseSaving) mutable.update { it.copy(courseEditor = null, courseError = null) } }
+    fun saveCourse(draft: CourseDraft) {
+        val editor = state.value.courseEditor ?: return
+        if (state.value.courseSaving) return
+        mutable.update { it.copy(courseSaving = true, courseError = null) }
+        viewModelScope.launch {
+            try {
+                scheduleController.editCourse(editor, draft)
+                mutable.update { it.copy(courseEditor = null, courseSaving = false, courseError = null) }
+            } catch (error: CancellationException) { throw error }
+            catch (error: CourseValidationException) { mutable.update { it.copy(courseSaving = false, courseError = error.message) } }
+            catch (_: ScheduleException) { mutable.update { it.copy(courseSaving = false, courseError = "保存未完成，原课表保留，请重试") } }
+            finally { mutable.update { it.copy(courseSaving = false) } }
+        }
+    }
+    fun selectLocalTerm(id: String?) {
+        viewModelScope.launch {
+            try { scheduleController.selectLocalTerm(id) }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) { mutable.update { it.copy(message = "课表暂时无法切换，请重试") } }
+        }
+    }
 
     private val billingController = BillingController(viewModelScope,
         credentials = { id -> withContext(Dispatchers.IO) { repository.credentialsForLogin(id) } },

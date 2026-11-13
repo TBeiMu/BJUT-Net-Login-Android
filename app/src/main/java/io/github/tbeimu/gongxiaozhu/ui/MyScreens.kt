@@ -38,6 +38,7 @@ import io.github.tbeimu.gongxiaozhu.BuildConfig
 import io.github.tbeimu.gongxiaozhu.R
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
+import io.github.tbeimu.gongxiaozhu.schedule.*
 import java.text.DateFormat
 import java.util.Date
 
@@ -163,6 +164,7 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
                     }
                     Text("课表账号独立于校园网账号。登录一次自动导入整个学期，完成后可离线查看。", Modifier.padding(horizontal = 8.dp),
                         style = MaterialTheme.typography.bodySmall, color = palette.inkFaint)
+                    LocalCourseManagement(schedule, model)
                     if (schedule.data.identity != null || schedule.blocked) TextButton(onClick = onResetSchedule, enabled = !schedule.busy) { Text("更换 / 解绑课表账号") }
                 }
                 MyDestination.ACCOUNTS -> StorageRecovery(state, model, onResetAccounts)
@@ -213,6 +215,45 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
                     Text("账号与课表加密保存在本机。卸载或清除应用数据会删除本机资料。", style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
                     Text("本机加密保护存储，不代表校园网认证的网络传输已加密。", style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
                     Text("课表视觉参考矿小助开源项目，以 Kotlin / Compose 独立实现。", style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalCourseManagement(state: ScheduleUiState, model: AppViewModel) {
+    if (state.blocked || state.loading) return
+    val enabled = !state.busy
+    val data = state.data
+    SectionLabel("本地课程")
+    OutlinedButton(onClick = { model.editCourse(newLocalTerm = true) }, enabled = enabled) { Text("新建本地学期") }
+    if (data.complete != null) OutlinedButton(onClick = { model.selectLocalTerm(null) }, enabled = enabled) { Text("查看当前学校课表") }
+    if (data.localTerms.isEmpty()) Text("暂无自定义课程，可在课表右上角添加", style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+    data.localTerms.forEach { term ->
+        GlassCard(spacing = 8.dp) {
+            Text(term.title, style = MaterialTheme.typography.titleMedium)
+            Text("${term.firstMonday} 起 · ${term.weekCount} 周", style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { model.selectLocalTerm(term.id) }, enabled = enabled) { Text("查看课表") }
+                TextButton(onClick = { model.editCourse(localTermId = term.id) }, enabled = enabled) { Text("添加课程") }
+            }
+            term.courses.forEach { course ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(course.name, style = MaterialTheme.typography.titleSmall)
+                    course.occurrences.groupBy { it.weekday to it.lessons }.forEach { (slot, occurrences) ->
+                        val weeks = occurrences.map { it.week }.sorted()
+                        val date = java.time.LocalDate.parse(term.firstMonday).plusWeeks(weeks.first() - 1L).plusDays(slot.first - 1L)
+                        val record = ScheduleCourse(course.id, course.name, date.toString(), slot.second, course.location, course.teacher,
+                            source = CourseSource.CUSTOM)
+                        Text("周${listOf("一", "二", "三", "四", "五", "六", "日")[slot.first - 1]} · 第 ${weeks.joinToString("、")} 周 · ${slot.second.joinToString("、")} 节",
+                            style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+                        if (weeks.any { it > term.weekCount }) Text("含学期范围外安排，请调整周次", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        Row {
+                            TextButton(onClick = { model.editCourse(record, weekday = slot.first, localTermId = term.id) }, enabled = enabled) { Text("编辑") }
+                            TextButton(onClick = { model.editCourse(record, weekday = slot.first, localTermId = term.id, deleteOnly = true) }, enabled = enabled) { Text("删除") }
+                        }
+                    }
                 }
             }
         }

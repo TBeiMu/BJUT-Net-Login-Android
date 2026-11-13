@@ -13,8 +13,11 @@ data class ScheduleTerm(val year: String, val term: String, val weekCount: Int, 
     val title: String get() = "$year 学年 · 第 $term 学期"
 }
 @Serializable
+enum class CourseSource { SCHOOL, CUSTOM }
+@Serializable
 data class ScheduleCourse(val id: String, val name: String, val date: String, val lessons: List<Int>,
-    val location: String = "", val teacher: String = "", val timeText: String = "", val weeksText: String = "") {
+    val location: String = "", val teacher: String = "", val timeText: String = "", val weeksText: String = "",
+    val source: CourseSource = CourseSource.SCHOOL) {
     override fun toString() = "ScheduleCourse(<redacted>)"
 }
 @Serializable
@@ -25,7 +28,8 @@ data class SemesterSchedule(val identity: ScheduleIdentity, val term: ScheduleTe
 data class PendingSchedule(val identity: ScheduleIdentity, val term: ScheduleTerm, val weeks: List<ScheduleWeek> = emptyList())
 @Serializable
 data class ScheduleData(val schema: Int = 1, val identity: ScheduleIdentity? = null,
-    val complete: SemesterSchedule? = null, val pending: PendingSchedule? = null) {
+    val complete: SemesterSchedule? = null, val pending: PendingSchedule? = null,
+    val localTerms: List<LocalScheduleTerm> = emptyList(), val selectedLocalTermId: String? = null) {
     override fun toString() = "ScheduleData(schema=$schema, data=<redacted>)"
 }
 

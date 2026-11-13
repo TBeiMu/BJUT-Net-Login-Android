@@ -56,7 +56,8 @@ class ScheduleImportUiTest {
         compose.runOnUiThread {
             model.scheduleController.networkChanged(ScheduleConnection("fake-mobile-route", ScheduleNetworkKind.CELLULAR) { fake })
         }
-        compose.onNodeWithText("导入研究生课表", substring = false).performClick()
+        compose.onNodeWithTag("import_schedule").performClick()
+        compose.onNodeWithTag("import_graduate").performClick()
         compose.onNodeWithText("学校统一身份认证").assertExists()
         assertEquals(0, submits)
         val ready = java.util.concurrent.atomic.AtomicReference<String?>(null)
