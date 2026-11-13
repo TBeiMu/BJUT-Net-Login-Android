@@ -13,7 +13,8 @@ data class AppSettings(
     val networkMode: NetworkMode = NetworkMode.AUTO,
 )
 
-data class AccountSummary(val id: String, val label: String, val username: String)
+data class AccountSummary(val id: String, val label: String, val username: String,
+    val canFillName: Boolean = false, val nameLookupPending: Boolean = false)
 
 data class AccountDraft(val id: String? = null, val label: String, val username: String, val password: String) {
     override fun toString(): String = "AccountDraft(id=$id, credentials=<redacted>)"
@@ -28,7 +29,10 @@ data class AccountState(
 }
 
 @Serializable
-internal data class SavedAccount(val id: String, val label: String, val username: String, val password: String) {
+internal data class SavedAccount(val id: String, val label: String, val username: String, val password: String,
+    // Older vaults used the account itself as the generated label.
+    val customLabel: Boolean? = null, val nameLookupPending: Boolean = false) {
+    val canFillName: Boolean get() = customLabel != true && (label.isBlank() || label == username)
     override fun toString(): String = "SavedAccount(id=$id, credentials=<redacted>)"
 }
 
@@ -41,4 +45,5 @@ internal data class VaultData(
 )
 
 class VaultUnavailableException : Exception("账号存储不可用，请重试或清除本机账号后重新录入。")
+class NameSaveException : Exception("姓名暂未保存，校园网账号仍可使用")
 class AccountValidationException(message: String) : Exception(message)

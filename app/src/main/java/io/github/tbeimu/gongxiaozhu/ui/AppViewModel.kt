@@ -44,18 +44,26 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
 
     private val loginController = runtime.controller
     val connectionNotice = runtime.connectionNotice
+    val nameWriteFailure = runtime.accountNames.writeFailure
+    fun consumeNameWriteFailure() = runtime.accountNames.consumeWriteFailure()
     val scheduleController = runtime.scheduleImport.controller
 
     private val billingController = BillingController(viewModelScope,
         credentials = { id -> withContext(Dispatchers.IO) { repository.credentialsForLogin(id) } },
         publish = { billing -> mutable.update { it.copy(billing = billing) } },
-        storageFailure = { mutable.update { it.copy(storageBlocked = true, editor = null, editorError = null) } },
+        storageFailure = {
+            runtime.storageUnavailable()
+            mutable.update { it.copy(storageBlocked = true, editor = null, editorError = null) }
+        },
         beforeOffline = loginController::deviceOfflineRequested,
         awaitLoginStopped = loginController::awaitStopped)
 
     init {
         loginController.awaitAccountReadiness()
         reload()
+        viewModelScope.launch { repository.state.collect { data ->
+            if (data != null) mutable.update { it.copy(data = repository.state.value ?: data) }
+        } }
         viewModelScope.launch { scheduleController.state.collect { schedule -> mutable.update { it.copy(schedule = schedule) } } }
         viewModelScope.launch { loginController.state.collect { login -> mutable.update { it.copy(login = login) } } }
         viewModelScope.launch { runtime.storageBlocked.collect { blocked ->
@@ -107,15 +115,18 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
 
     fun reload() {
         if (state.value.busy) return
+        runtime.accountNames.storageAvailable(false)
+        runtime.accountNames.editingAccount(null)
         mutable.update { it.copy(loading = true, busy = true, editor = null) }
         viewModelScope.launch {
             try {
                 val data = withContext(Dispatchers.IO) { repository.load() }
                 runtime.storageReloaded()
-                mutable.update { it.copy(data = data, loading = false, busy = false, storageBlocked = false) }
+                mutable.update { it.copy(data = repository.state.value ?: data, loading = false, busy = false, storageBlocked = false) }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
+                runtime.storageUnavailable()
                 mutable.update { it.copy(loading = false, busy = false, storageBlocked = true) }
             }
         }
@@ -130,6 +141,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
     fun editAccount(id: String) {
         if (state.value.busy) return
         loginController.accountWillChange(id)
+        runtime.accountNames.editingAccount(id)
         mutable.update { it.copy(busy = true) }
         viewModelScope.launch {
             try {
@@ -138,28 +150,37 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
             } catch (error: CancellationException) {
                 throw error
             } catch (_: VaultUnavailableException) {
+                runtime.storageUnavailable()
+                runtime.accountNames.editingAccount(null)
                 mutable.update { it.copy(busy = false, storageBlocked = true, editor = null, editorError = null, message = null) }
             } catch (_: Exception) {
+                runtime.accountNames.editingAccount(null)
                 mutable.update { it.copy(busy = false, message = "账号暂时无法读取，请重试") }
             }
         }
     }
 
-    fun closeEditor() { if (!state.value.busy) mutable.update { it.copy(editor = null, editorError = null) } }
+    fun closeEditor() { if (!state.value.busy) {
+        mutable.update { it.copy(editor = null, editorError = null) }
+        runtime.accountNames.editingAccount(null)
+    } }
     fun clearMessage() = mutable.update { it.copy(message = null) }
 
     fun saveAccount(draft: AccountDraft) {
         draft.id?.let(loginController::accountWillChange)
+        draft.id?.let(runtime.accountNames::accountWillChange)
         write("账号已加密保存", closeEditor = true, accountChange = true) { repository.save(draft) }
     }
     fun deleteAccount(id: String) {
         loginController.accountWillChange(id)
+        runtime.accountNames.accountWillChange(id)
         write("账号已删除", accountChange = true) { repository.delete(id) }
     }
     fun setDefault(id: String) = write("默认账号已更新，将用于后续登录", accountChange = true) { repository.setDefault(id) }
     fun updateSettings(settings: AppSettings) = write("设置已保存") { repository.settings(settings) }
     fun resetStorage() {
         loginController.accountWillChange(null)
+        runtime.accountNames.accountWillChange(null)
         write("本机账号已清除，请重新添加", recovery = true, accountChange = true) { repository.reset() }
     }
 
@@ -177,19 +198,24 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
             try {
                 val data = withContext(Dispatchers.IO) { action() }
                 runtime.storageReloaded()
-                mutable.update { it.copy(data = data, busy = false, storageBlocked = false,
+                mutable.update { it.copy(data = repository.state.value ?: data, busy = false, storageBlocked = false,
                     editor = if (closeEditor) null else it.editor, editorError = null, message = success) }
+                if (closeEditor) runtime.accountNames.editingAccount(null)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: AccountValidationException) {
                 mutable.update { if (it.editor != null) it.copy(busy = false, editorError = error.message)
                     else it.copy(busy = false, message = error.message) }
             } catch (_: VaultUnavailableException) {
+                runtime.storageUnavailable()
+                runtime.accountNames.editingAccount(null)
                 mutable.update { it.copy(busy = false, storageBlocked = true, editor = null, editorError = null, message = null) }
             } catch (_: Exception) {
                 val message = if (recovery) "清除未完成，请重试读取并检查存储状态" else "保存失败，请重试；未显示保存成功"
                 mutable.update { if (it.editor != null) it.copy(busy = false, editorError = message)
                     else it.copy(busy = false, message = message) }
+            } finally {
+                runtime.accountNames.accountChangeFinished()
             }
         }
     }

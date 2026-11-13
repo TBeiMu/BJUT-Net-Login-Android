@@ -1,6 +1,7 @@
 package io.github.tbeimu.gongxiaozhu.schedule
 
 import io.github.tbeimu.gongxiaozhu.data.readBounded
+import io.github.tbeimu.gongxiaozhu.data.AccountDraft
 import io.github.tbeimu.gongxiaozhu.network.NetworkDns
 import java.io.IOException
 import java.net.Proxy
@@ -76,6 +77,35 @@ class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns
     override suspend fun open(): ScheduleGate = inSession { gate(follow(TERM_URL.toHttpUrl())) }
 
     override suspend fun submit(token: String, values: Map<String, String>): ScheduleGate = inSession {
+        val result = submitForm(token, values)
+        if (result.url.host == "cas.bjut.edu.cn") gate(result) else gate(follow(TERM_URL.toHttpUrl()))
+    }
+
+    /** Name-only lookup uses a fresh session and never starts or binds a timetable import. */
+    suspend fun accountIdentity(account: AccountDraft): ScheduleIdentity = inSession {
+        var info = follow(IDENTITY_URL.toHttpUrl())
+        val login = loginIfRequired(info)
+        if (login != null) {
+            val document = Jsoup.parse(form?.html ?: throw ScheduleException(ScheduleProblem.LOGIN))
+            val captcha = document.selectFirst("#captchaParent")
+            val scripts = document.select("script:not([src])").joinToString("\n") { it.data() }
+            val configuredCaptcha = Regex("(?:config\\.captcha\\s*=|[\"']captcha[\"']\\s*:)\\s*([^;,\\n}]+)")
+                .findAll(scripts).any { it.groupValues[1].trim() !in setOf("false", "null", "undefined", "0", "\"\"", "''") }
+            if (document.selectFirst("input[name=captcha]") != null || (captcha != null &&
+                !captcha.attr("style").replace(" ", "").contains("display:none", true)) || configuredCaptcha) {
+                throw ScheduleException(ScheduleProblem.LOGIN)
+            }
+            val result = submitForm(login.page.token, mapOf("username" to account.username,
+                "password" to account.password, "type" to "username_password"))
+            // Another CAS page means user interaction is required. Never retry the password.
+            if (result.url.host == "cas.bjut.edu.cn") throw ScheduleException(ScheduleProblem.LOGIN)
+            info = follow(IDENTITY_URL.toHttpUrl())
+        }
+        if (info.url.host != "itsapp.bjut.edu.cn") throw ScheduleException(ScheduleProblem.IDENTITY)
+        ScheduleParser.identity(info.text(), account.username)
+    }
+
+    private suspend fun submitForm(token: String, values: Map<String, String>): ScheduleResponse {
         val current = form ?: throw ScheduleException(ScheduleProblem.EXPIRED)
         if (closed.get() || token != pageToken) throw ScheduleException(ScheduleProblem.EXPIRED)
         if (values.size > 12 || values.any { it.key !in current.editable || it.value.length > 1024 }) throw ScheduleException(ScheduleProblem.LOGIN)
@@ -97,11 +127,10 @@ class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns
             override fun writeTo(sink: okio.BufferedSink) = formBody.writeTo(sink)
         }
         // A single explicit submit; neither automatic follow-ups nor 307/308 may replay its body.
-        val result = follow(current.url, body, current.url)
-        if (result.url.host == "cas.bjut.edu.cn") gate(result) else gate(follow(TERM_URL.toHttpUrl()))
+        return follow(current.url, body, current.url)
     }
 
-    private suspend fun gate(response: ScheduleResponse): ScheduleGate {
+    private suspend fun loginIfRequired(response: ScheduleResponse): ScheduleGate.Login? {
         currentCoroutineContext().ensureActive()
         if (response.url.host == "cas.bjut.edu.cn") return chineseLoginPage(response)
         val root = runCatching { Json.parseToJsonElement(response.text()).jsonObject }.getOrNull()
@@ -112,6 +141,11 @@ class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns
             if (!allowedScheduleUrl(target) || target.host !in setOf("cas.bjut.edu.cn", "itsapp.bjut.edu.cn")) throw ScheduleException(ScheduleProblem.ADDRESS)
             return chineseLoginPage(follow(target))
         }
+        return null
+    }
+
+    private suspend fun gate(response: ScheduleResponse): ScheduleGate {
+        loginIfRequired(response)?.let { return it }
         val term = ScheduleParser.term(response.text())
         val info = follow(IDENTITY_URL.toHttpUrl())
         if (info.url.host != "itsapp.bjut.edu.cn") return chineseLoginPage(info)

@@ -91,6 +91,7 @@ import io.github.tbeimu.gongxiaozhu.data.AccountDraft
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 import io.github.tbeimu.gongxiaozhu.update.UpdatePhase
+import kotlinx.coroutines.flow.filter
 
 internal enum class Tab(val title: String) {
     SCHEDULE("课表"), BILLING("资费"), MY("我的")
@@ -138,6 +139,14 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
         state.message?.let { snackbar.showSnackbar(it); model.clearMessage() }
     }
     UpdateCheckFeedback(updateActions.repository, snackbar, updateUnobstructed && !updateDialogVisible, updateActions.releasePage)
+    val nameFeedbackVisible = updateUnobstructed && !updateDialogVisible && !state.busy &&
+        !state.loading && !state.storageBlocked
+    LaunchedEffect(model, nameFeedbackVisible) {
+        if (!nameFeedbackVisible) return@LaunchedEffect
+        model.nameWriteFailure.filter { it }.collect {
+            if (model.consumeNameWriteFailure()) snackbar.showSnackbar("姓名暂未保存，校园网账号仍可使用")
+        }
+    }
 
     AppShell(tab, { tab = it; destination = null }, wallpaper, snackbar) { padding ->
       ScreenHost(Screen(tab, destination)) { screen ->
@@ -430,6 +439,8 @@ private fun AccountEditor(draft: AccountDraft, busy: Boolean, error: String?, on
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done),
                     trailingIcon = { TextButton(onClick = { visible = !visible }) { Text(if (visible) "隐藏" else "显示") } })
                 Text("账号资料加密保存在本机；登录时仅向学校认证地址提交默认账号。", style = MaterialTheme.typography.bodySmall)
+                if (draft.id == null) Text("备注留空时，会用本账号尝试一次学校登录以补全姓名；也可在导入课表后补全。",
+                    style = MaterialTheme.typography.bodySmall)
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },

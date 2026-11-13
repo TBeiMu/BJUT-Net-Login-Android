@@ -37,11 +37,20 @@ class CampusLoginRuntime private constructor(context: Context) {
         startService = { id -> ContextCompat.startForegroundService(context,
             Intent(context, CampusLoginService::class.java).putExtra(CampusLoginService.TASK_ID, id)); Unit },
         storageFailure = { blocked.value = true })
+    val accountNames = AccountNameController(scope, accounts, { blocked.value = true }, controller::isAuthenticatedOn)
 
-    init { scope.launch { controller.state.collect {
-        connectionNotice.update(it)
-        if (!it.running && !foreground) stopMonitoring()
-    } } }
+    init {
+        scope.launch { controller.state.collect {
+            connectionNotice.update(it)
+            accountNames.authenticationChanged()
+            if (!it.running && !foreground) stopMonitoring()
+        } }
+        scope.launch { connections.collect(accountNames::wifiObserved) }
+        scope.launch { blocked.collect { accountNames.storageAvailable(!it) } }
+        scope.launch { scheduleImport.controller.state.collect {
+            accountNames.scheduleIdentity(if (it.loading || it.blocked) null else it.data.identity, ready = !it.loading)
+        } }
+    }
 
     fun enterForeground() {
         foreground = true
@@ -56,10 +65,12 @@ class CampusLoginRuntime private constructor(context: Context) {
             }
         }
         controller.enterForeground()
+        accountNames.enterForeground()
     }
 
     fun leaveForeground() {
         foreground = false
+        accountNames.leaveForeground()
         connectionNotice.setVisible(false)
         controller.leaveForeground()
         if (!controller.state.value.running) stopMonitoring()
@@ -71,7 +82,8 @@ class CampusLoginRuntime private constructor(context: Context) {
         wifi.value = WifiObservation.Suspended
         connectionNotice.suspendObservation()
     }
-    fun storageReloaded() { blocked.value = false }
+    fun storageReloaded() { blocked.value = false; accountNames.storageAvailable(true) }
+    fun storageUnavailable() { blocked.value = true }
 
     companion object {
         @Volatile private var instance: CampusLoginRuntime? = null

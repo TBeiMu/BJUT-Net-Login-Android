@@ -139,6 +139,9 @@ class ScheduleBackgroundServiceTest {
     }
 
     @Test fun notificationPausesAndOldNotificationCannotStopNewImport() {
+        // This case interacts with a visible notification; fresh API 33+ installs otherwise hide it.
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.grantRuntimePermission(
+            context.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
         val first = Session(); start(first)
         val manager = context.getSystemService(NotificationManager::class.java)
         waitFor { manager.activeNotifications.any { it.id == 501 } }

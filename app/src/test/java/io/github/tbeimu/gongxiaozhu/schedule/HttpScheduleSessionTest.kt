@@ -1,6 +1,8 @@
 package io.github.tbeimu.gongxiaozhu.schedule
 
 import io.github.tbeimu.gongxiaozhu.network.NetworkDns
+import io.github.tbeimu.gongxiaozhu.network.HttpAccountNameLookup
+import io.github.tbeimu.gongxiaozhu.data.AccountDraft
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -101,6 +103,75 @@ class HttpScheduleSessionTest {
         assertTrue(session.open() is ScheduleGate.Login)
         assertEquals("XMLHttpRequest", original.first().header("X-Requested-With"))
         assertEquals(0, original.count { it.method == "POST" })
+    }
+
+    private fun identityLogin(html: String = page()) {
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "$CAS_ORIGIN/login?locale=zh_cn"))
+        server.enqueue(response(html))
+    }
+    private fun nameAccount(password: String = "fictional-password") = AccountDraft(
+        label = "", username = "graduate-demo", password = password)
+
+    @Test fun nameLookupVerifiesIdentityWithoutAnyTermOrWeekRequest() = runBlocking {
+        identityLogin()
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "$SCHEDULE_ORIGIN/return?ticket=fictional-ticket"))
+        server.enqueue(response("<html>done</html>")); server.enqueue(response(identityResponse))
+        val password = "  fictional&+%中文=  "
+        assertEquals(demoIdentity, session.accountIdentity(nameAccount(password)))
+        assertEquals(5, server.requestCount)
+        assertTrue(original.none { it.url.toString().startsWith(TERM_URL) || it.url.toString().startsWith(WEEK_URL) })
+        repeat(2) { server.takeRequest() }
+        val posted = server.takeRequest().body.readUtf8().split('&').associate {
+            val pair = it.split('=', limit = 2)
+            java.net.URLDecoder.decode(pair[0], "UTF-8") to java.net.URLDecoder.decode(pair[1], "UTF-8")
+        }
+        assertEquals(password, posted["password"])
+        assertEquals("fake-changing-execution", posted["execution"])
+    }
+
+    @Test fun nameLookupSkipsCredentialsWhenCaptchaIsRequired() = runBlocking {
+        for (extra in listOf("<input name='captcha'>", "<div id='captchaParent'></div>",
+            "<script>config.captcha='fictional-challenge';</script>")) {
+            session.close()
+            session = HttpScheduleSession(client, NetworkDns { listOf(InetAddress.getLoopbackAddress()) })
+            identityLogin(page().replace("</form>", "$extra</form>"))
+            assertEquals(ScheduleProblem.LOGIN, (runCatching { session.accountIdentity(nameAccount()) }
+                .exceptionOrNull() as? ScheduleException)?.problem)
+        }
+        assertEquals(6, server.requestCount)
+        assertTrue(original.none { it.method == "POST" })
+    }
+
+    @Test fun nameLookupStopsOnPasswordRejectionAndCannotUseAnotherIdentity() = runBlocking {
+        identityLogin(); server.enqueue(response(page()))
+        assertEquals(ScheduleProblem.LOGIN, (runCatching { session.accountIdentity(nameAccount()) }
+            .exceptionOrNull() as? ScheduleException)?.problem)
+        assertEquals(3, server.requestCount)
+        session.close()
+        session = HttpScheduleSession(client, NetworkDns { listOf(InetAddress.getLoopbackAddress()) })
+        server.enqueue(response(identityResponse.replace("graduate-demo", "another-fictional-student")))
+        assertEquals(ScheduleProblem.IDENTITY, (runCatching { session.accountIdentity(nameAccount()) }
+            .exceptionOrNull() as? ScheduleException)?.problem)
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test fun nameLookupDoesNotRetry503PasswordSubmission() = runBlocking {
+        identityLogin()
+        server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0"))
+        server.enqueue(response(page()))
+        assertEquals(ScheduleProblem.CONNECTION, (runCatching { session.accountIdentity(nameAccount()) }
+            .exceptionOrNull() as? ScheduleException)?.problem)
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test fun separateNameLookupsDoNotShareCookies() = runBlocking {
+        val lookup = HttpAccountNameLookup(client, NetworkDns { listOf(InetAddress.getLoopbackAddress()) })
+        server.enqueue(response(identityResponse).setHeader("Set-Cookie", "fictional_session=only-once; Path=/"))
+        server.enqueue(response(identityResponse))
+        assertEquals(demoIdentity, lookup.lookup(nameAccount()))
+        assertEquals(demoIdentity, lookup.lookup(nameAccount()))
+        assertNull(server.takeRequest().getHeader("Cookie"))
+        assertNull(server.takeRequest().getHeader("Cookie"))
     }
 
     @Test fun dnsDeadlineIsAConnectionFailureAndCancelsLookup() = runTest {

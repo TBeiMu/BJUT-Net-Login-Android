@@ -1,6 +1,8 @@
 package io.github.tbeimu.gongxiaozhu.data
 
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -15,11 +17,14 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private var vault: VaultData? = null
     private var hasPersistedVault = false
+    private val mutable = MutableStateFlow<AccountState?>(null)
+    val state = mutable.asStateFlow()
 
     @Synchronized
     fun load(): AccountState {
         vault = null
         hasPersistedVault = false
+        mutable.value = null
         return guarded {
             val bytes = store.read()
             val loaded = if (bytes == null) VaultData() else {
@@ -33,7 +38,7 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
             validateVault(loaded)
             vault = loaded
             hasPersistedVault = bytes != null
-            loaded.summary()
+            publish(loaded)
         }
     }
 
@@ -53,7 +58,13 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
         if (draft.id != null && current.accounts.none { it.id == draft.id }) {
             throw AccountValidationException("账号不存在，请返回后重试")
         }
-        val saved = SavedAccount(draft.id ?: UUID.randomUUID().toString(), label, username, draft.password)
+        val previous = current.accounts.find { it.id == draft.id }
+        val custom = if (draft.label.isBlank()) false
+            else if (previous != null && previous.label == label && previous.username == username) previous.customLabel
+            else true
+        val pending = if (previous == null) draft.label.isBlank() else previous.nameLookupPending &&
+            previous.username == username && previous.password == draft.password && custom != true
+        val saved = SavedAccount(draft.id ?: UUID.randomUUID().toString(), label, username, draft.password, custom, pending)
         val accounts = if (draft.id == null) current.accounts + saved else current.accounts.map {
             if (it.id == draft.id) saved else it
         }
@@ -93,31 +104,86 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
     @Synchronized
     fun settings(settings: AppSettings): AccountState = persist(requireLoaded().copy(settings = settings))
 
+    /** Consume the one-time attempt before reading credentials or starting school HTTP. */
+    @Synchronized
+    fun beginNameLookup(id: String, isCurrent: () -> Boolean = { true }): AccountDraft? {
+        if (!isCurrent()) return null
+        checkPersistedState()
+        val current = requireLoaded()
+        val account = current.accounts.find { it.id == id && it.nameLookupPending && it.canFillName } ?: return null
+        if (!persistName(current.copy(accounts = current.accounts.map {
+            if (it.id == id) it.copy(nameLookupPending = false) else it
+        }), isCurrent)) return null
+        return AccountDraft(account.id, account.label, account.username, account.password)
+    }
+
+    /** A late result cannot rename a replaced account, changed password or custom label. */
+    @Synchronized
+    fun completeNameLookup(account: AccountDraft, studentId: String, name: String,
+        isCurrent: () -> Boolean = { true }): Boolean {
+        if (studentId != account.username) return false
+        return fillName(studentId, name, isCurrent) { it.id == account.id && it.password == account.password }
+    }
+
+    @Synchronized
+    fun fillNameFromSchedule(studentId: String, name: String, accountId: String? = null,
+        isCurrent: () -> Boolean = { true }): Boolean =
+        fillName(studentId, name, isCurrent) { accountId == null || it.id == accountId }
+
+    private fun fillName(studentId: String, rawName: String, isCurrent: () -> Boolean,
+        matches: (SavedAccount) -> Boolean): Boolean {
+        if (!isCurrent()) return false
+        val name = rawName.trim()
+        if (name.isEmpty() || name == studentId || name.length > 80 || name.any(Char::isISOControl)) return false
+        checkPersistedState()
+        val current = requireLoaded()
+        val account = current.accounts.find { it.username == studentId && it.canFillName && matches(it) } ?: return false
+        return persistName(current.copy(accounts = current.accounts.map {
+            if (it.id == account.id) it.copy(label = name, customLabel = false, nameLookupPending = false) else it
+        }), isCurrent)
+    }
+
     /** Only called after explicit destructive-action confirmation in the recovery UI. */
     @Synchronized
     fun reset(): AccountState = guarded {
         vault = null
         hasPersistedVault = false
+        mutable.value = null
         store.clear()
         cipher.clearKey()
         vault = VaultData()
-        requireLoaded().summary()
+        publish(requireLoaded())
     }
 
-    private fun persist(next: VaultData): AccountState = guarded {
+    private fun persist(next: VaultData): AccountState = guarded { checkNotNull(writeVerified(next)) }
+
+    private fun persistName(next: VaultData, isCurrent: () -> Boolean): Boolean = try {
+        writeVerified(next, isCurrent) != null
+    } catch (_: Exception) {
+        // Only downgrade the error after rereading/decrypting the original, unchanged vault.
+        // A damaged file, missing key or uncertain write still blocks account operations.
+        checkPersistedState()
+        throw NameSaveException()
+    }
+
+    /** Called under the repository monitor; queued/cancelled name work cannot cross this boundary. */
+    private fun writeVerified(next: VaultData, isCurrent: () -> Boolean = { true }): AccountState? {
+        if (!isCurrent()) return null
         validateVault(next)
         checkPersistedState()
+        if (!isCurrent()) return null
         val plaintext = json.encodeToString(next).encodeToByteArray()
         try {
             val encrypted = cipher.encrypt(plaintext, requireExistingKey = hasPersistedVault)
             require(encrypted.size <= 1024 * 1024)
+            if (!isCurrent()) return null
             store.write(encrypted)
         } finally {
             plaintext.fill(0)
         }
         vault = next
         hasPersistedVault = true
-        next.summary()
+        return publish(next)
     }
 
     private fun checkPersistedState() = guarded {
@@ -149,8 +215,10 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
     }
 
     private fun VaultData.summary() = AccountState(
-        accounts.map { AccountSummary(it.id, it.label, it.username) }, defaultAccountId, settings,
+        accounts.map { AccountSummary(it.id, it.label, it.username, it.canFillName, it.nameLookupPending) }, defaultAccountId, settings,
     )
+
+    private fun publish(value: VaultData): AccountState = value.summary().also { mutable.value = it }
 
     private inline fun <T> guarded(action: () -> T): T = try {
         action()

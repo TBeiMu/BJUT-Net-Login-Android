@@ -194,13 +194,152 @@ class AccountRepositoryTest {
         assertThrows(VaultUnavailableException::class.java) { repository.credentialsForLogin(second) }
     }
 
+    @Test fun newUnnamedAccountGetsOnePersistedNameAttempt() {
+        val account = repository.save(draft("student-demo-01").copy(label = "")).accounts.single()
+        assertTrue(account.canFillName); assertTrue(account.nameLookupPending)
+        val restored = AccountRepository(store, cipher)
+        restored.load()
+        assertNotNull(restored.beginNameLookup(account.id))
+        assertNull(restored.beginNameLookup(account.id))
+        assertFalse(AccountRepository(store, cipher).load().accounts.single().nameLookupPending)
+    }
+
+    @Test fun verifiedNamePersistsWithoutChangingPasswordDefaultOrSettings() {
+        val account = repository.save(draft("student-demo-01").copy(label = "")).accounts.single()
+        repository.settings(AppSettings(false, NetworkMode.DORM_WIFI))
+        val request = repository.beginNameLookup(account.id)!!
+        assertTrue(repository.completeNameLookup(request, account.username, " 测试同学 "))
+        val restored = AccountRepository(store, cipher)
+        val state = restored.load()
+        assertEquals("测试同学", state.accounts.single().label)
+        assertEquals(account.id, state.defaultAccountId)
+        assertEquals(request.password, restored.edit(account.id).password)
+        assertEquals(AppSettings(false, NetworkMode.DORM_WIFI), state.settings)
+        assertFalse(store.bytes!!.toString(Charsets.UTF_8).contains("测试同学"))
+        assertEquals(state, repository.state.value)
+    }
+
+    @Test fun customLabelsIncludingExplicitAccountTextArePreserved() {
+        for (label in listOf("我的校园网", "student-demo-01")) {
+            repository.reset()
+            val account = repository.save(draft("student-demo-01").copy(label = label)).accounts.single()
+            assertFalse(account.canFillName); assertFalse(account.nameLookupPending)
+            assertNull(repository.beginNameLookup(account.id))
+            assertFalse(repository.fillNameFromSchedule(account.username, "测试同学"))
+            assertEquals(label, repository.state.value!!.accounts.single().label)
+        }
+    }
+
+    @Test fun lateNameCannotOverwriteEditedOrRecreatedAccount() {
+        val account = repository.save(draft("student-demo-01").copy(label = "")).accounts.single()
+        val request = repository.beginNameLookup(account.id)!!
+        repository.save(request.copy(password = "changed-fictional-password"))
+        assertFalse(repository.completeNameLookup(request, account.username, "测试同学"))
+        repository.delete(account.id)
+        repository.save(draft(account.username).copy(label = ""))
+        assertFalse(repository.completeNameLookup(request, account.username, "测试同学"))
+        assertEquals(account.username, repository.state.value!!.accounts.single().label)
+    }
+
+    @Test fun namesOnlyFillTheMatchingAccountAndRejectInvalidNames() {
+        val first = repository.save(draft("student-demo-01").copy(label = "")).accounts.single()
+        val second = repository.save(draft("student-demo-02").copy(label = "")).accounts.last()
+        val request = repository.beginNameLookup(first.id)!!
+        assertFalse(repository.completeNameLookup(request, second.username, "测试同学"))
+        for (name in listOf("", " ", first.username, "x".repeat(81), "测试\n姓名")) {
+            assertFalse(repository.fillNameFromSchedule(first.username, name))
+        }
+        assertTrue(repository.fillNameFromSchedule(second.username, "第二同学"))
+        assertEquals(first.username, repository.state.value!!.accounts.first().label)
+        assertEquals("第二同学", repository.state.value!!.accounts.last().label)
+        assertEquals(first.id, repository.state.value!!.defaultAccountId)
+    }
+
+    @Test fun olderVaultDoesNotStartOnlineLookupsButCanUseImportedName() {
+        val old = """{"version":1,"accounts":[{"id":"legacy","label":"student-demo-01","username":"student-demo-01","password":"fictional-password"}],"defaultAccountId":"legacy"}"""
+        store.bytes = cipher.encrypt(old.encodeToByteArray())
+        val state = repository.load()
+        assertFalse(state.accounts.single().nameLookupPending)
+        assertTrue(state.accounts.single().canFillName)
+        assertTrue(repository.fillNameFromSchedule("student-demo-01", "测试同学"))
+    }
+
+    @Test fun failedNameWritePreservesOldEncryptedFileAndPublishedState() {
+        val account = repository.save(draft("student-demo-01").copy(label = "")).accounts.single()
+        val previous = repository.state.value
+        val bytes = store.bytes!!.copyOf()
+        store.failWrite = true
+        assertThrows(NameSaveException::class.java) { repository.fillNameFromSchedule(account.username, "测试同学") }
+        assertEquals(previous, repository.state.value)
+        assertArrayEquals(bytes, store.bytes)
+        assertEquals("demo-only-password", repository.credentialsForLogin(account.id)!!.password)
+    }
+
+    @Test fun failedAttemptMarkerWriteDoesNotReleaseCredentialsOrConsumeTheAttempt() {
+        val account = repository.save(draft("student-demo-01").copy(label = "")).accounts.single()
+        store.failWrite = true
+        assertThrows(NameSaveException::class.java) { repository.beginNameLookup(account.id) }
+        assertTrue(repository.state.value!!.accounts.single().nameLookupPending)
+        assertEquals("demo-only-password", repository.credentialsForLogin(account.id)!!.password)
+    }
+
+    @Test fun failedNameWriteWithDamagedFileOrLostKeyStillBlocksAccounts() {
+        for (damageFile in listOf(true, false)) {
+            repository.reset()
+            val account = repository.save(draft("student-demo-01").copy(label = "")).accounts.single()
+            store.onWrite = {
+                if (damageFile) store.bytes = byteArrayOf(1, 2, 3) else keys.key = null
+                throw IOException("Fictional uncertain write")
+            }
+            assertThrows(VaultUnavailableException::class.java) { repository.fillNameFromSchedule(account.username, "测试同学") }
+            assertThrows(VaultUnavailableException::class.java) { repository.credentialsForLogin(account.id) }
+            store.onWrite = {}
+        }
+    }
+
+    @Test fun cancelledNameOperationsDoNotReadOrWriteTheVault() {
+        val account = repository.save(draft("student-demo-01").copy(label = "")).accounts.single()
+        val saved = repository.edit(account.id)
+        val bytes = store.bytes!!.copyOf()
+        keys.key = null // A cancelled task should not even attempt to decrypt.
+        assertNull(repository.beginNameLookup(account.id) { false })
+        assertFalse(repository.fillNameFromSchedule(account.username, "测试同学", account.id) { false })
+        assertFalse(repository.completeNameLookup(saved, account.username, "测试同学") { false })
+        assertArrayEquals(bytes, store.bytes)
+    }
+
+    @Test fun cancellationDuringEncryptionSkipsTheCommit() {
+        val account = repository.save(draft("student-demo-01").copy(label = "")).accounts.single()
+        val bytes = store.bytes!!.copyOf()
+        var valid = true
+        val cancellingCipher = object : VaultCipher by cipher {
+            override fun encrypt(plaintext: ByteArray, requireExistingKey: Boolean): ByteArray =
+                cipher.encrypt(plaintext, requireExistingKey).also { valid = false }
+        }
+        val other = AccountRepository(store, cancellingCipher)
+        other.load()
+        assertFalse(other.fillNameFromSchedule(account.username, "测试同学", account.id) { valid })
+        assertArrayEquals(bytes, store.bytes)
+        assertEquals(account.username, other.state.value!!.accounts.single().label)
+    }
+
+    @Test fun cachedNameIsBoundToTheOriginallySelectedAccountId() {
+        val original = repository.save(draft("student-demo-01").copy(label = "")).accounts.single()
+        repository.delete(original.id)
+        repository.save(draft(original.username).copy(label = ""))
+        assertFalse(repository.fillNameFromSchedule(original.username, "测试同学", original.id))
+        assertEquals(original.username, repository.state.value!!.accounts.single().label)
+    }
+
     private fun draft(username: String) = AccountDraft(label = "测试账号", username = username, password = "demo-only-password")
 
     private class MemoryStore : VaultStore {
         var bytes: ByteArray? = null
         var failWrite = false
+        var onWrite: () -> Unit = {}
         override fun read() = bytes?.copyOf()
         override fun write(bytes: ByteArray) {
+            onWrite()
             if (failWrite) throw IOException("Simulated write failure")
             this.bytes = bytes.copyOf()
         }

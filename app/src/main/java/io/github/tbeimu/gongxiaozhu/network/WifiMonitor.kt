@@ -18,6 +18,7 @@ import io.github.tbeimu.gongxiaozhu.billing.BillingSession
 import io.github.tbeimu.gongxiaozhu.billing.HttpBillingSession
 
 class WifiConnection(val key: String, val transport: PortalTransport,
+    val nameLookup: AccountNameLookup? = null, val internetValidated: Boolean = false,
     val billingSession: (() -> BillingSession)? = null) {
     override fun toString() = "WifiConnection(network=<bound>)"
 }
@@ -36,10 +37,13 @@ class WifiMonitor(context: Context) {
     val connections = callbackFlow {
         // Snapshot once, then use ordered callback data on the same main thread.
         val networks = linkedMapOf<Network, LinkProperties?>()
+        val validated = mutableMapOf<Network, Boolean>()
         @Suppress("DEPRECATION")
         manager.allNetworks.forEach { network ->
             if (isPhysicalWifi(manager.getNetworkCapabilities(network))) {
                 networks[network] = manager.getLinkProperties(network)
+                validated[network] = manager.getNetworkCapabilities(network)
+                    ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
             }
         }
         fun publish() {
@@ -58,6 +62,8 @@ class WifiMonitor(context: Context) {
                     .connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS)
                     .callTimeout(4, TimeUnit.SECONDS).build()
                 trySend(WifiConnection(fingerprint, HttpPortalTransport(client, ipv4Client, BoundNetworkDns.onNetwork(selected)),
+                    nameLookup = HttpAccountNameLookup(client, BoundNetworkDns.onNetwork(selected)),
+                    internetValidated = validated[selected] == true,
                     billingSession = { HttpBillingSession(client) }))
             }
         }
@@ -65,12 +71,13 @@ class WifiMonitor(context: Context) {
             override fun onAvailable(network: Network) {
                 if (!networks.containsKey(network)) networks[network] = null
             }
-            override fun onLost(network: Network) { networks.remove(network); publish() }
+            override fun onLost(network: Network) { networks.remove(network); validated.remove(network); publish() }
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
                 if (!isPhysicalWifi(networkCapabilities)) {
                     networks.remove(network)
-                    publish()
-                }
+                    validated.remove(network)
+                } else validated[network] = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                publish()
             }
             override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
                 networks[network] = linkProperties
@@ -82,5 +89,5 @@ class WifiMonitor(context: Context) {
         manager.registerNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
         publish()
         awaitClose { manager.unregisterNetworkCallback(callback) }
-    }.flowOn(Dispatchers.Main.immediate).distinctUntilChangedBy { it?.key }
+    }.flowOn(Dispatchers.Main.immediate).distinctUntilChangedBy { it?.let { wifi -> wifi.key to wifi.internetValidated } }
 }

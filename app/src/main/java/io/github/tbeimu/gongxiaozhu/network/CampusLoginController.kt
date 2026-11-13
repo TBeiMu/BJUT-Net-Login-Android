@@ -62,6 +62,8 @@ class CampusLoginController(
     fun awaitWifiSnapshot() { hasWifiSnapshot = false }
     fun awaitAccountReadiness() { ready = false }
 
+    fun isAuthenticatedOn(networkKey: String): Boolean = hasWifiSnapshot && wifi?.key == networkKey && state.value.completed
+
     fun enterForeground() {
         if (foreground) return
         foreground = true
