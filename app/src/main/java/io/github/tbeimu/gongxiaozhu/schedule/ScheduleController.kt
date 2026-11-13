@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -42,6 +43,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     private var network: ScheduleConnection? = null
     private var observed = false
     private var session: ScheduleSession? = null
+    private val closingSessions = mutableListOf<ScheduleSession>()
     private var job: Job? = null
     private var generation = 0L
     private var networkTask = false
@@ -83,7 +85,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     fun start() {
         if (!foreground || job != null || state.value.blocked) return
         val selected = network?.takeIf { observed } ?: run { message("请连接可上网的 WiFi 或开启移动数据，再导入课表"); return }
-        session?.close()
+        closeSession()
         networkTask = true
         mutable.value = state.value.copy(page = null, imported = 0, total = 0,
             notice = ScheduleNotice.PROGRESS, message = "正在打开学校登录页…")
@@ -140,7 +142,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
                 mutable.value = state.value.copy(data = data, imported = gate.term.weekCount,
                     notice = ScheduleNotice.SUCCESS,
                     message = "整学期导入完成，可离线查看；课表来自学校")
-                active.close(); if (session === active) session = null
+                closeSession()
                 networkTask = false
             }
         }
@@ -149,12 +151,14 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     fun pause(text: String = "导入已暂停；已取得的进度保留，继续时需重新登录") {
         if (session == null && !networkTask) return
         generation++
-        session?.close(); session = null
         networkTask = false
         // Main.immediate can finish cleanup and stop the service inline during cancel().
         // Publish the reason first so observers never see an idle task still marked as importing.
         mutable.value = state.value.copy(page = null, notice = ScheduleNotice.PAUSED, message = text)
-        job?.cancel()
+        closeSession()
+        // An idle login page can still own resource/DNS requests after its opening task ended.
+        val activeJob = job
+        if (activeJob != null) activeJob.cancel() else runTask {}
     }
 
     /** Called after confirmation. Finish old request cleanup before touching its saved progress. */
@@ -219,7 +223,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         val token = ++generation
         mutable.value = state.value.copy(busy = true)
         job = scope.launch(start = CoroutineStart.LAZY) {
-            try { action() }
+            try { awaitClosedSessions(); action() }
             catch (_: TimeoutCancellationException) {
                 // An operation's deadline can expire while this import task is still active.
                 // Explicit cancellation must keep its own state and message.
@@ -231,6 +235,9 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
                 fail(token, error.problem)
             } catch (_: Exception) {
                 fail(token, ScheduleProblem.CONNECTION)
+            } finally {
+                // Keep the task slot and foreground service until every retired session is drained.
+                withContext(NonCancellable) { awaitClosedSessions() }
             }
         }.also { owned -> owned.invokeOnCompletion {
             scope.launch {
@@ -246,10 +253,23 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     }
     private fun fail(token: Long, problem: ScheduleProblem) {
         if (generation != token) return
-        session?.close(); session = null
+        closeSession()
         networkTask = false
         mutable.value = state.value.copy(page = null, message = problem.hint, notice = ScheduleNotice.ERROR,
             blocked = problem == ScheduleProblem.STORAGE)
+    }
+    private fun closeSession() {
+        val active = session ?: return
+        session = null
+        closingSessions += active
+        active.close()
+    }
+    private suspend fun awaitClosedSessions() {
+        while (closingSessions.isNotEmpty()) {
+            val active = closingSessions.first()
+            active.awaitClosed()
+            closingSessions.remove(active)
+        }
     }
     private suspend fun <T> io(block: () -> T): T = withContext(ioDispatcher) { block() }
 }

@@ -27,6 +27,7 @@ class ScheduleBackgroundImportTest {
         val finish = CompletableDeferred<Unit>()
         var loginResult: CompletableDeferred<ScheduleGate>? = null
         var cleanup: CompletableDeferred<Unit>? = null
+        var closing: CompletableDeferred<Unit>? = null
         override suspend fun open(): ScheduleGate {
             opens++
             return ScheduleGate.Login(ScheduleLoginPage("fictional-token", "https://cas.bjut.edu.cn/login", "fictional page"))
@@ -48,6 +49,7 @@ class ScheduleBackgroundImportTest {
         }
         override suspend fun resource(token: String, url: String): ScheduleResource? = null
         override fun close() { closed = true }
+        override suspend fun awaitClosed() { check(closed); closing?.await() }
     }
 
     private fun route(session: Session, name: String = "fictional-wifi",
@@ -262,5 +264,66 @@ class ScheduleBackgroundImportTest {
         assertEquals(ScheduleNotice.PAUSED, controller.state.value.notice)
         assertTrue(observed.none { !it.busy && it.notice == ScheduleNotice.PROGRESS })
         assertTrue(session.closed)
+    }
+
+    @Test fun cancelledImportRetainsItsTaskUntilSessionResourcesAreClosed() = runTest {
+        val first = Session().apply { closing = CompletableDeferred() }
+        val next = Session()
+        var selected = first
+        val controller = ScheduleController(backgroundScope, repository(), StandardTestDispatcher(testScheduler))
+        runCurrent()
+        controller.networkChanged(ScheduleConnection("fictional-wifi", ScheduleNetworkKind.WIFI) { selected })
+        controller.enterForeground(); controller.start(); runCurrent()
+        controller.submit("fictional-token", emptyMap()); runCurrent()
+        val task = controller.state.value.taskId
+        controller.pause(); runCurrent()
+        assertTrue(first.closed)
+        assertTrue(controller.state.value.busy)
+        assertEquals(task, controller.state.value.taskId)
+        assertEquals(1, controller.state.value.data.pending!!.weeks.size)
+        selected = next
+        controller.start(); runCurrent()
+        assertEquals(0, next.opens)
+        first.closing!!.complete(Unit); runCurrent()
+        assertFalse(controller.state.value.busy); assertNull(controller.state.value.taskId)
+        controller.start(); runCurrent()
+        assertEquals(1, next.opens)
+        controller.leaveForeground(); runCurrent()
+    }
+
+    @Test fun reopeningLoginPageWaitsForPreviousPageResources() = runTest {
+        val first = Session().apply { closing = CompletableDeferred() }
+        val next = Session()
+        var selected = first
+        val controller = ScheduleController(backgroundScope, repository(), StandardTestDispatcher(testScheduler))
+        runCurrent()
+        controller.networkChanged(ScheduleConnection("fictional-wifi", ScheduleNetworkKind.WIFI) { selected })
+        controller.enterForeground(); controller.start(); runCurrent()
+        assertFalse(controller.state.value.busy); assertNotNull(controller.state.value.page)
+        selected = next
+        controller.start(); runCurrent()
+        assertTrue(first.closed); assertTrue(controller.state.value.busy)
+        assertNull(controller.state.value.page); assertEquals(0, next.opens)
+        first.closing!!.complete(Unit); runCurrent()
+        assertEquals(1, next.opens); assertNotNull(controller.state.value.page)
+        controller.leaveForeground(); runCurrent()
+    }
+
+    @Test fun cancellingIdleLoginPageWaitsBeforeDiscardingSavedProgress() = runTest {
+        val repo = repository()
+        repo.begin(demoIdentity, demoTerm); repo.append(demoWeek(1)); repo.append(demoWeek(2))
+        val old = repo.finish(100).complete
+        repo.begin(demoIdentity, demoTerm); repo.append(demoWeek(1))
+        val session = Session().apply { closing = CompletableDeferred() }
+        val controller = ScheduleController(backgroundScope, repo, StandardTestDispatcher(testScheduler))
+        runCurrent()
+        controller.networkChanged(route(session)); controller.enterForeground(); controller.start(); runCurrent()
+        controller.cancelImport(); runCurrent()
+        assertTrue(session.closed); assertTrue(controller.state.value.busy)
+        assertNotNull(repo.snapshot().pending)
+        session.closing!!.complete(Unit); runCurrent()
+        assertFalse(controller.state.value.busy); assertNull(repo.snapshot().pending)
+        assertEquals(old, repo.snapshot().complete)
+        assertEquals(demoIdentity, repo.snapshot().identity)
     }
 }

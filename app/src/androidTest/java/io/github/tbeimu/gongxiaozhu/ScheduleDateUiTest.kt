@@ -8,6 +8,7 @@ import androidx.lifecycle.Lifecycle
 import io.github.tbeimu.gongxiaozhu.schedule.*
 import io.github.tbeimu.gongxiaozhu.ui.GongXiaoZhuTheme
 import io.github.tbeimu.gongxiaozhu.ui.ScheduleScreen
+import io.github.tbeimu.gongxiaozhu.ui.ScheduleHome
 import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Rule
@@ -18,7 +19,7 @@ class ScheduleDateUiTest {
     private val monday = LocalDate.of(2026, 11, 2)
     private val date = AtomicReference(monday)
 
-    private fun showSchedule() {
+    private fun showSchedule(todayView: Boolean = false) {
         val identity = ScheduleIdentity("fake-student")
         val term = ScheduleTerm("2026-2027", "1", 2, 1)
         val weeks = (1..2).map { n -> ScheduleWeek(n, (0L..6L).map { monday.plusWeeks(n - 1L).plusDays(it).toString() }, emptyList()) }
@@ -26,10 +27,11 @@ class ScheduleDateUiTest {
             complete = SemesterSchedule(identity, term, weeks, 1)), loading = false)
         compose.setContent {
             GongXiaoZhuTheme {
-                ScheduleScreen(state, Modifier, {}, {}, {}, {}, todayProvider = date::get)
+                if (todayView) ScheduleHome(state, Modifier, {}, {}, {}, {}, todayProvider = date::get)
+                else ScheduleScreen(state, Modifier, {}, {}, {}, {}, todayProvider = date::get)
             }
         }
-        compose.onNodeWithText("第 1 周").assertExists()
+        compose.onNodeWithText(if (todayView) "今天 · 11月2日 · 第 1 周" else "第 1 周").assertExists()
     }
 
     @Test fun returningToForegroundRefreshesDateWithoutReimporting() {
@@ -57,5 +59,22 @@ class ScheduleDateUiTest {
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         compose.onNodeWithText("回到本周", substring = false).assertDoesNotExist()
         compose.onNodeWithText("第 1 周").assertExists()
+    }
+
+    @Test fun todayViewFollowsTheNewDateOnReturnToForeground() {
+        showSchedule(todayView = true)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        date.set(monday.plusWeeks(1))
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.onNodeWithText("今天 · 11月9日 · 第 2 周").assertExists()
+    }
+
+    @Test fun todayViewKeepsAnExplicitlyBrowsedDayOnReturn() {
+        showSchedule(todayView = true)
+        compose.onNodeWithTag("agenda_day_3").performClick()
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        date.set(monday.plusWeeks(1))
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.onNodeWithText("11月5日 · 第 1 周").assertExists()
     }
 }

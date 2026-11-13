@@ -56,6 +56,8 @@ interface ScheduleSession {
     suspend fun week(term: ScheduleTerm, number: Int): ScheduleWeek
     suspend fun resource(token: String, url: String): ScheduleResource?
     fun close()
+    /** After close(), wait for HTTP, DNS and login-page resource cleanup without blocking the UI. */
+    suspend fun awaitClosed() {}
 }
 
 internal fun validateTerm(term: ScheduleTerm) {

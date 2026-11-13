@@ -9,9 +9,15 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.*
 import okhttp3.*
@@ -60,15 +66,16 @@ class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(12, TimeUnit.SECONDS).callTimeout(18, TimeUnit.SECONDS).build()
     private val calls = ConcurrentHashMap.newKeySet<Call>()
+    private val operations = mutableSetOf<Job>()
     @Volatile private var pageToken: String? = null
     private var form: CasForm? = null
     private var submittedUsername: String? = null
     private var verifiedIdentity: ScheduleIdentity? = null
     private val resources = ConcurrentHashMap<String, ScheduleResource>()
 
-    override suspend fun open(): ScheduleGate = gate(follow(TERM_URL.toHttpUrl()))
+    override suspend fun open(): ScheduleGate = inSession { gate(follow(TERM_URL.toHttpUrl())) }
 
-    override suspend fun submit(token: String, values: Map<String, String>): ScheduleGate {
+    override suspend fun submit(token: String, values: Map<String, String>): ScheduleGate = inSession {
         val current = form ?: throw ScheduleException(ScheduleProblem.EXPIRED)
         if (closed.get() || token != pageToken) throw ScheduleException(ScheduleProblem.EXPIRED)
         if (values.size > 12 || values.any { it.key !in current.editable || it.value.length > 1024 }) throw ScheduleException(ScheduleProblem.LOGIN)
@@ -78,13 +85,20 @@ class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns
         if (values["type"] != null && values["type"] != "username_password") throw ScheduleException(ScheduleProblem.LOGIN)
         submittedUsername = username
         pageToken = null; form = null; resources.clear()
-        val body = FormBody.Builder().apply {
+        val formBody = FormBody.Builder().apply {
             current.hidden.filterNot { it.first in values }.forEach { (key, value) -> add(key, value) }
             values.forEach { (key, value) -> add(key, value) }
         }.build()
-        // A single explicit submit; 307/308 cannot replay a password-bearing POST.
+        // Connection retries are separate from HTTP follow-ups (including 503 + Retry-After: 0).
+        val body = object : RequestBody() {
+            override fun contentType() = formBody.contentType()
+            override fun contentLength() = formBody.contentLength()
+            override fun isOneShot() = true
+            override fun writeTo(sink: okio.BufferedSink) = formBody.writeTo(sink)
+        }
+        // A single explicit submit; neither automatic follow-ups nor 307/308 may replay its body.
         val result = follow(current.url, body, current.url)
-        return if (result.url.host == "cas.bjut.edu.cn") gate(result) else gate(follow(TERM_URL.toHttpUrl()))
+        if (result.url.host == "cas.bjut.edu.cn") gate(result) else gate(follow(TERM_URL.toHttpUrl()))
     }
 
     private suspend fun gate(response: ScheduleResponse): ScheduleGate {
@@ -133,25 +147,25 @@ class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns
         return ScheduleGate.Login(ScheduleLoginPage(token, response.url.toString(), ScheduleWebDocument.render(response.text(), response.url, token)))
     }
 
-    override suspend fun week(term: ScheduleTerm, number: Int): ScheduleWeek {
+    override suspend fun week(term: ScheduleTerm, number: Int): ScheduleWeek = inSession {
         if (verifiedIdentity == null) throw ScheduleException(ScheduleProblem.EXPIRED)
         validateTerm(term)
         if (number !in 1..term.weekCount) throw ScheduleException(ScheduleProblem.RESPONSE)
         val body = FormBody.Builder().add("year", term.year).add("term", term.term).add("week", number.toString()).add("type", "2").build()
         val response = follow(WEEK_URL.toHttpUrl(), body, SCHEDULE_ENTRY.toHttpUrl())
         if (response.url.host != "itsapp.bjut.edu.cn") throw ScheduleException(ScheduleProblem.EXPIRED)
-        return ScheduleParser.week(response.text(), number)
+        ScheduleParser.week(response.text(), number)
     }
 
-    override suspend fun resource(token: String, url: String): ScheduleResource? {
-        if (closed.get() || token != pageToken) return null
-        val target = runCatching { url.toHttpUrl().newBuilder().fragment(null).build() }.getOrNull() ?: return null
-        if (!allowedCasResource(target)) return null
-        resources[target.toString()]?.let { return it }
-        if (resources.size >= 80) return null
-        return try {
+    override suspend fun resource(token: String, url: String): ScheduleResource? = inSession {
+        if (token != pageToken) return@inSession null
+        val target = runCatching { url.toHttpUrl().newBuilder().fragment(null).build() }.getOrNull() ?: return@inSession null
+        if (!allowedCasResource(target)) return@inSession null
+        resources[target.toString()]?.let { return@inSession it }
+        if (resources.size >= 80) return@inSession null
+        try {
             val response = follow(target, resource = true)
-            if (closed.get() || pageToken != token) return null
+            if (closed.get() || pageToken != token) return@inSession null
             val bytes = if (response.mime == "text/html") ScheduleWebDocument.sanitizeFrame(response.text(), response.url).toByteArray() else response.bytes
             ScheduleResource(bytes, response.mime).also { if (!target.encodedPath.startsWith("/captcha")) resources[target.toString()] = it }
         } catch (error: CancellationException) { throw error }
@@ -199,13 +213,15 @@ class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns
         if (referer != null) builder.header("Referer", referer.toString())
         if (body != null) builder.post(body)
         val call = resolved.newCall(builder.build())
+        val finished = CompletableDeferred<Unit>()
         calls += call
         if (closed.get()) call.cancel()
         try { suspendCancellableCoroutine { continuation ->
             continuation.invokeOnCancellation { call.cancel() }
-            call.enqueue(object : Callback {
+            try { call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
                     calls.remove(call)
+                    finished.complete(Unit)
                     if (continuation.isActive) continuation.resumeWithException(ScheduleException(ScheduleProblem.CONNECTION))
                 }
                 override fun onResponse(call: Call, response: Response) {
@@ -217,16 +233,38 @@ class HttpScheduleSession(boundClient: OkHttpClient, private val dns: NetworkDns
                         }
                         if (continuation.isActive) continuation.resume(result)
                     } catch (_: Exception) { if (continuation.isActive) continuation.resumeWithException(ScheduleException(ScheduleProblem.RESPONSE)) }
-                    finally { calls.remove(call) }
+                    finally { calls.remove(call); finished.complete(Unit) }
                 }
-            })
-        } } finally { if (closed.get()) call.cancel() }
+            }) } catch (_: Exception) {
+                calls.remove(call); finished.complete(Unit)
+                if (continuation.isActive) continuation.resumeWithException(ScheduleException(ScheduleProblem.CONNECTION))
+            }
+        } } finally {
+            // Cancellation of the coroutine is only a request to stop native HTTP work.
+            withContext(NonCancellable) { finished.await() }
+        }
     } ?: throw ScheduleException(ScheduleProblem.CONNECTION)
 
+    private suspend fun <T> inSession(action: suspend () -> T): T = coroutineScope {
+        val operation = currentCoroutineContext()[Job]!!
+        synchronized(operations) {
+            if (closed.get()) throw CancellationException("Schedule session closed")
+            operations += operation
+        }
+        try { action() } finally { synchronized(operations) { operations -= operation } }
+    }
+
     override fun close() {
-        closed.set(true)
-        calls.forEach { it.cancel() }; calls.clear()
+        // Registration and closing share a lock: no new DNS/resource operation can escape cleanup.
+        val pending = synchronized(operations) { closed.set(true); operations.toList() }
         pageToken = null; form = null; submittedUsername = null; verifiedIdentity = null
         resources.clear(); cookies.clear()
+        pending.forEach { it.cancel() }
+        calls.forEach { it.cancel() }
+    }
+
+    override suspend fun awaitClosed() {
+        val pending = synchronized(operations) { check(closed.get()); operations.toList() }
+        pending.joinAll()
     }
 }

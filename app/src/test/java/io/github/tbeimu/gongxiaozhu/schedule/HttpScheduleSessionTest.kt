@@ -76,6 +76,24 @@ class HttpScheduleSessionTest {
         assertNull(session.resource(result.page.token, "https://example.com/asset.js"))
     }
 
+    @Test fun serviceUnavailableCannotAutomaticallyReplayPasswordPost() = runBlocking {
+        val page = loginPage()
+        repeat(2) { server.takeRequest() }
+        server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0"))
+        server.enqueue(response(page())) // Must remain unused until an explicit new login.
+        val error = runCatching {
+            session.submit(page.token, mapOf("username" to "graduate-demo", "password" to "fictional-password"))
+        }.exceptionOrNull()
+        assertEquals(ScheduleProblem.CONNECTION, (error as? ScheduleException)?.problem)
+        assertEquals("POST", server.takeRequest().method)
+        // Count server requests: application interceptors do not observe OkHttp's internal retries.
+        assertEquals(3, server.requestCount)
+        assertEquals(ScheduleProblem.EXPIRED, (runCatching {
+            session.submit(page.token, mapOf("username" to "graduate-demo", "password" to "fictional-password"))
+        }.exceptionOrNull() as? ScheduleException)?.problem)
+        assertEquals(3, server.requestCount)
+    }
+
     @Test fun anonymousAjaxResponseOpensOnlySchoolLoginUrl() = runBlocking {
         server.enqueue(response("""{"e":10013,"d":{"login_url":"https://itsapp.bjut.edu.cn/uc/wap/login"}}"""))
         server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "https://cas.bjut.edu.cn/login?locale=zh_cn"))

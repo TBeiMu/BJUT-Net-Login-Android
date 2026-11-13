@@ -145,8 +145,9 @@ private fun TodayScreen(state: ScheduleUiState, schedule: SemesterSchedule, onIm
     // Today when it is in the term; otherwise the Monday of the school's current week.
     val home = today.value.toString().takeIf { it in termDays }
         ?: schedule.weeks.getOrNull(schedule.term.currentWeek - 1)?.dates?.firstOrNull() ?: schedule.weeks.first().dates.first()
-    var chosen by rememberSaveable(schedule.identity.studentId, schedule.term.key) { mutableStateOf(home) }
-    val selected = LocalDate.parse(chosen.takeIf { it in termDays } ?: home)
+    // null follows today's clock, including after restoration; explicit browsing keeps its date.
+    var chosen by rememberSaveable(schedule.identity.studentId, schedule.term.key) { mutableStateOf<String?>(null) }
+    val selected = LocalDate.parse(chosen?.takeIf { it in termDays } ?: home)
     val week = schedule.weeks.firstOrNull { selected.toString() in it.dates } ?: schedule.weeks.first()
     var details by remember(schedule) { mutableStateOf<List<ScheduleCourse>?>(null) }
     var cancelConfirmation by remember { mutableStateOf(false) }
@@ -155,7 +156,9 @@ private fun TodayScreen(state: ScheduleUiState, schedule: SemesterSchedule, onIm
     val spin = rememberSpin(state.busy)
     val haptic = LocalHapticFeedback.current
     fun select(date: LocalDate) {
-        if (date.toString() in termDays && date != selected) { chosen = date.toString(); haptic.performHapticFeedback(HapticFeedbackType.SegmentTick) }
+        if (date.toString() !in termDays) return
+        chosen = date.toString().takeUnless { date == today.value }
+        if (date != selected) haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
     }
     val blocks = remember(week, selected) { dayBlocks(schedule, selected) }
 
@@ -187,7 +190,7 @@ private fun TodayScreen(state: ScheduleUiState, schedule: SemesterSchedule, onIm
         }
         // A sideways swipe moves a day; the page follows in the same direction.
         val threshold = with(LocalDensity.current) { 64.dp.toPx() }
-        Box(Modifier.weight(1f).fillMaxWidth().pointerInput(chosen) {
+        Box(Modifier.weight(1f).fillMaxWidth().pointerInput(selected, termDays, threshold) {
             var distance = 0f
             detectHorizontalDragGestures(onDragStart = { distance = 0f }, onHorizontalDrag = { change, delta ->
                 change.consume(); distance += delta
