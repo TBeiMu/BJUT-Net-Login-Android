@@ -69,10 +69,7 @@ class AccountUiTest {
         compose.onNodeWithText("添加账号").performClick()
         fillAndSave("第二测试账号", "ui-second-demo")
         waitFor("第二测试账号")
-        compose.onNodeWithTag("account_selector").performScrollTo().performClick()
-        compose.onAllNodes(hasText("第二测试账号", substring = false)).fetchSemanticsNodes().let { nodes -> org.junit.Assert.assertTrue(nodes.isNotEmpty()) }
-        compose.onNodeWithTag("account_selector").assertExists()
-        compose.onNode(hasText("第二测试账号", substring = false) and androidx.compose.ui.test.hasClickAction()).performClick()
+        compose.onNode(hasText("设为默认", substring = false) and isEnabled()).performScrollTo().performClick()
         compose.waitUntil(10_000) {
             storedStateWhenIdle()?.defaultAccount?.label == "第二测试账号"
         }

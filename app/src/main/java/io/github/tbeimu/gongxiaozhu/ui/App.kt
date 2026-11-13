@@ -38,9 +38,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -64,7 +61,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -341,42 +337,11 @@ internal fun NetworkPanel(state: AppUiState, model: AppViewModel) {
 }
 
 @Composable
-internal fun AccountSelector(state: AppUiState, onSelect: (String) -> Unit, onAdd: () -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    val palette = gxz
-    Box(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().glass(palette, TileShape).clickable(enabled = !state.busy, role = Role.Button) { expanded = true }
-            .testTag("account_selector").padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            GlyphChip(AppGlyph.PERSON)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(state.data.defaultAccount?.label ?: "选择 / 添加校园网账号", style = MaterialTheme.typography.titleMedium)
-                state.data.defaultAccount?.let { Text(maskUsername(it.username), style = MaterialTheme.typography.bodySmall,
-                    color = palette.inkSoft, fontFamily = FontFamily.Monospace) }
-            }
-            LineGlyph(AppGlyph.CHEVRON, Modifier.size(16.dp).rotate(90f), palette.inkFaint)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(16.dp)) {
-            state.data.accounts.forEach { account ->
-                DropdownMenuItem(text = { Column {
-                    Text(account.label + if (account.id == state.data.defaultAccountId) " · 当前" else "")
-                    Text(maskUsername(account.username), style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
-                } }, onClick = { expanded = false; if (account.id != state.data.defaultAccountId) onSelect(account.id) },
-                    modifier = Modifier.testTag("select_account_${account.id}"))
-            }
-            if (state.data.accounts.isNotEmpty()) HorizontalDivider(color = palette.hairline)
-            DropdownMenuItem(text = { Text("添加账号") }, onClick = { expanded = false; onAdd() })
-        }
-    }
-}
-
-@Composable
 internal fun Accounts(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onEdit: (String) -> Unit,
     onDefault: (String) -> Unit, onDelete: (AccountSummary) -> Unit) {
     val palette = gxz
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { AccountSelector(state, onDefault, onAdd) }
         item { CtaButton("添加账号", onAdd, enabled = !state.busy) }
         item { Text("已保存 ${state.data.accounts.size} 个账号", Modifier.padding(start = 8.dp, top = 6.dp),
             style = MaterialTheme.typography.labelMedium, color = palette.inkFaint) }
