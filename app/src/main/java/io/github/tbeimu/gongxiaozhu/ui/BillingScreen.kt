@@ -174,10 +174,10 @@ private fun BillingHeader(account: String, message: String, running: Boolean, mo
                 color = gxz.inkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
             // Reserve two text lines and the loader slot even when idle, so status changes cannot move the actions.
             Row(Modifier.weight(1f).height(statusHeight).testTag("billing_status_area"), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.size(22.dp)) { if (running) BrandLoader(Modifier.fillMaxSize()) }
-                Text(message, Modifier.weight(1f).testTag("billing_status"), style = statusStyle,
-                    color = gxz.inkSoft, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End)
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End)) {
+                Box(Modifier.size(22.dp).testTag("billing_status_loader")) { if (running) BrandLoader(Modifier.fillMaxSize()) }
+                Text(message, Modifier.testTag("billing_status"), style = statusStyle,
+                    color = gxz.inkSoft, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Start)
             }
         }
     }

@@ -124,8 +124,10 @@ class BillingUiTest {
         val snapshot = BillingSnapshot(metrics, listOf(device))
         val billing = mutableStateOf(BillingUiState())
         val fontScale = mutableStateOf(1f)
+        var expectedGap = 0f
         compose.setContent { BillingPreviewTheme { AppBackdrop(WallpaperState()) {
             val density = LocalDensity.current
+            expectedGap = with(density) { 4.dp.toPx() }
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale.value)) {
                 Box(Modifier.width(360.dp).height(680.dp).testTag("billing_layout_host")) {
                     BillingScreen(AppUiState(data = data, loading = false, billing = billing.value), Modifier, {}, {}, {})
@@ -154,9 +156,20 @@ class BillingUiTest {
                 compose.onNodeWithTag("billing_status").assertTextEquals(message).assertHasNoClickAction()
                     .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { get ->
                         val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
-                        assertTrue(get(results)); assertFalse("字号 $scale 截断提示「$message」", results.single().hasVisualOverflow)
+                        assertTrue(get(results))
+                        val layout = results.single()
+                        // Content-sized Text can retain a wider paragraph; check painted lines instead of unused layout width.
+                        for (line in 0 until layout.lineCount) {
+                            assertFalse("字号 $scale 省略提示「$message」", layout.isLineEllipsized(line))
+                            assertTrue("字号 $scale 截断提示「$message」", layout.getLineLeft(line) >= -1f &&
+                                layout.getLineRight(line) <= layout.size.width + 1f && layout.getLineBottom(line) <= layout.size.height + 1f)
+                        }
                     }
                 if (running) {
+                    val loaderBounds = compose.onNodeWithTag("billing_status_loader").fetchSemanticsNode().boundsInRoot
+                    val textBounds = compose.onNodeWithTag("billing_status").fetchSemanticsNode().boundsInRoot
+                    assertEquals("加载动画应贴近提示文字", expectedGap, textBounds.left - loaderBounds.right, 1f)
+                    assertEquals("加载动画和文字应整体靠右", status.right, textBounds.right, 1f)
                     compose.onNodeWithTag("billing_login").assertIsNotEnabled()
                     compose.onNodeWithTag("billing_accounts").assertIsNotEnabled()
                     compose.onNodeWithTag("billing_offline").assertIsNotEnabled()
