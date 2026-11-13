@@ -6,7 +6,9 @@ import android.graphics.BitmapFactory
 import androidx.core.net.toUri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -40,7 +43,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -57,10 +64,17 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
     val metrics = billing.snapshot?.metrics.orEmpty()
     var code by remember(billing.captcha) { mutableStateOf("") }
     var choosingDevice by remember(billing.snapshot?.devices) { mutableStateOf(false) }
-    ReportDialogVisibility(choosingDevice, onDialogVisibilityChanged)
+    var showingStatus by remember(billing.message) { mutableStateOf(false) }
+    ReportDialogVisibility(choosingDevice || showingStatus, onDialogVisibilityChanged)
     val context = LocalContext.current
     val palette = gxz
     val quietBorder = BorderStroke(1.dp, palette.ink.copy(alpha = .16f))
+    if (showingStatus) {
+        AlertDialog(onDismissRequest = { showingStatus = false }, title = { Text("资费查询提示") },
+            properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
+            text = { Text(billing.message, Modifier.verticalScroll(rememberScrollState()).testTag("billing_status_detail")) },
+            confirmButton = { TextButton(onClick = { showingStatus = false }) { Text("关闭") } })
+    }
     if (choosingDevice) {
         AlertDialog(onDismissRequest = { choosingDevice = false }, title = { Text("选择要注销的在线设备") },
             properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
@@ -80,8 +94,8 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
     val waiting = billing.running
     Column(modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        PageHeader("校园网资费", state.data.defaultAccount?.let { "${it.label} · ${maskUsername(it.username)}" } ?: "未添加校园网账号",
-            Modifier.parallaxHeader(scroll))
+        BillingHeader(state.data.defaultAccount?.let { "${it.label} · ${maskUsername(it.username)}" } ?: "未添加校园网账号",
+            billing.message, billing.running, { showingStatus = true }, Modifier.parallaxHeader(scroll))
         // The four figures arrive as a Z: left to right, then the next row.
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MetricCard("已用流量", metrics["已用流量"], AppGlyph.TRAFFIC, waiting, Modifier.weight(1f).fillMaxHeight().entrance(40, fromScale = .96f))
@@ -93,14 +107,6 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
                 Modifier.weight(1f).fillMaxHeight().entrance(40 + Motion.STAGGER * 2, fromScale = .96f))
             MetricCard("账户余额", metrics["账户余额"], AppGlyph.COIN, waiting,
                 Modifier.weight(1f).fillMaxHeight().entrance(40 + Motion.STAGGER * 3, fromScale = .96f))
-        }
-        if (billing.running || billing.message.isNotBlank()) {
-            Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (billing.running) BrandLoader(Modifier.size(22.dp))
-                Text(billing.message, modifier = Modifier.testTag("billing_status"), style = MaterialTheme.typography.bodySmall,
-                    color = palette.inkSoft)
-            }
         }
         billing.captcha?.let { bytes ->
             val bitmap = remember(bytes) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
@@ -118,7 +124,7 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
             enabled = enabled && state.data.defaultAccount != null && (billing.captcha == null || code.length == 4))
         Row(Modifier.fillMaxWidth().entrance(40 + Motion.STAGGER * 5), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(onClick = onAccounts, enabled = enabled, contentPadding = PaddingValues(horizontal = 8.dp),
-                border = quietBorder, modifier = Modifier.weight(1f).heightIn(min = 46.dp)) { Text("管理账号") }
+                border = quietBorder, modifier = Modifier.weight(1f).heightIn(min = 46.dp).testTag("billing_accounts")) { Text("管理账号") }
             OutlinedButton(onClick = { choosingDevice = true }, enabled = enabled && !billing.snapshot?.devices.isNullOrEmpty(),
                 contentPadding = PaddingValues(horizontal = 8.dp), border = quietBorder,
                 modifier = Modifier.weight(1f).heightIn(min = 46.dp).testTag("billing_offline")) { Text("注销设备") }
@@ -161,6 +167,33 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
 }
 
 @Composable
+private fun BillingHeader(account: String, message: String, running: Boolean, onMessage: () -> Unit, modifier: Modifier) {
+    val statusStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodySmall)
+    // Empty/Latin text and wrapped CJK text can have different fallback-font metrics, especially with font scaling.
+    val statusPixels = rememberTextMeasurer().measure("查询 WiFi\n查询 WiFi", statusStyle, maxLines = 2).size.height
+    val statusHeight = maxOf(48.dp, with(LocalDensity.current) { statusPixels.toDp() })
+    Column(modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 20.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("校园网资费", style = MaterialTheme.typography.headlineLarge, color = gxz.ink,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text(account, Modifier.weight(1f).testTag("billing_account"), style = MaterialTheme.typography.bodyMedium,
+                color = gxz.inkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Reserve two text lines and the loader slot even when idle, so status changes cannot move the actions.
+            Row(Modifier.weight(1f).height(statusHeight).testTag("billing_status_area").then(
+                if (message.isNotBlank()) Modifier.clickable(role = Role.Button, onClickLabel = "查看完整提示", onClick = onMessage)
+                else Modifier), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(22.dp)) { if (running) BrandLoader(Modifier.fillMaxSize()) }
+                Text(message, Modifier.weight(1f).testTag("billing_status"), style = statusStyle,
+                    color = gxz.inkSoft, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End)
+            }
+        }
+    }
+}
+
+@Composable
 private fun Hint(text: String, color: Color) {
     Text(text, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.bodyMedium, color = color)
 }
@@ -169,6 +202,11 @@ private fun Hint(text: String, color: Color) {
 @Composable
 private fun MetricCard(label: String, metric: BillingMetric?, glyph: AppGlyph, waiting: Boolean, modifier: Modifier) {
     val palette = gxz
+    val valueStyle = LocalTextStyle.current.merge(MaterialTheme.typography.headlineMedium).copy(fontFeatureSettings = "tnum")
+    val unitStyle = LocalTextStyle.current.merge(MaterialTheme.typography.labelMedium)
+    val measurer = rememberTextMeasurer()
+    val valueHeight = with(LocalDensity.current) { measurer.measure("未设置 0123—", valueStyle, maxLines = 1).size.height.toDp() }
+    val unitHeight = with(LocalDensity.current) { measurer.measure("MB 元", unitStyle, maxLines = 1).size.height.toDp() }
     Column(modifier.heightIn(min = 124.dp).testTag("metric_$label").glass(palette)
         .shimmer(waiting, Color.White.copy(alpha = if (palette.dark) .07f else .5f)).padding(16.dp),
         verticalArrangement = Arrangement.SpaceBetween) {
@@ -178,9 +216,13 @@ private fun MetricCard(label: String, metric: BillingMetric?, glyph: AppGlyph, w
         }
         Column(Modifier.padding(top = 18.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             // Figures count up from zero on arrival, and from the old value after a refresh.
-            RollingNumber(metric?.value ?: "—", MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"),
-                if (metric == null) palette.inkFaint else palette.ink)
-            Text(metric?.unit.orEmpty(), style = MaterialTheme.typography.labelMedium, color = palette.inkFaint)
+            // Numeric placeholders, CJK values and units share measured slots before and after a query.
+            Box(Modifier.fillMaxWidth().height(valueHeight), contentAlignment = Alignment.CenterStart) {
+                RollingNumber(metric?.value ?: "—", valueStyle, if (metric == null) palette.inkFaint else palette.ink)
+            }
+            Box(Modifier.fillMaxWidth().height(unitHeight), contentAlignment = Alignment.CenterStart) {
+                Text(metric?.unit.orEmpty(), style = unitStyle, color = palette.inkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

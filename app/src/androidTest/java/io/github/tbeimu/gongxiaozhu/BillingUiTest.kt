@@ -1,17 +1,22 @@
 package io.github.tbeimu.gongxiaozhu
 
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -28,6 +33,7 @@ import io.github.tbeimu.gongxiaozhu.billing.BillingDiagnostic
 import io.github.tbeimu.gongxiaozhu.billing.BillingSnapshot
 import io.github.tbeimu.gongxiaozhu.billing.BillingUiState
 import io.github.tbeimu.gongxiaozhu.billing.BillingParser
+import io.github.tbeimu.gongxiaozhu.billing.BillingProblem
 import io.github.tbeimu.gongxiaozhu.data.AccountState
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.ui.AppUiState
@@ -113,11 +119,63 @@ class BillingUiTest {
         compose.onNodeWithTag("offline_device_0").assertDoesNotExist()
     }
 
-    @Test fun runningQueryDisablesDuplicateAndDeviceOperations() {
-        compose.setContent { BillingPreviewTheme {
-            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(running = true,
-                snapshot = BillingSnapshot(metrics, listOf(device)))), Modifier, {}, {}, {})
-        } }
+    @Test fun queryStatusKeepsActionsStillAndDisablesDuplicateOperations() {
+        val snapshot = BillingSnapshot(metrics, listOf(device))
+        val billing = mutableStateOf(BillingUiState())
+        val fontScale = mutableStateOf(1f)
+        var dialogVisible = false
+        compose.setContent { BillingPreviewTheme { AppBackdrop(WallpaperState()) {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale.value)) {
+                Box(Modifier.width(360.dp).height(680.dp).testTag("billing_layout_host")) {
+                    BillingScreen(AppUiState(data = data, loading = false, billing = billing.value), Modifier,
+                        {}, {}, {}, { dialogVisible = it })
+                }
+            }
+        } } }
+        // Use unclipped positions and sizes: on a small screen large-font actions can be below the viewport.
+        fun bounds(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().let { it.positionInRoot to it.size }
+        val fixed = listOf("metric_已用流量", "metric_可用流量", "metric_消费保护", "metric_账户余额",
+            "billing_login", "billing_accounts", "billing_offline")
+        for (scale in listOf(1f, 1.8f)) {
+            compose.runOnIdle { fontScale.value = scale; billing.value = BillingUiState() }
+            val original = fixed.associateWith(::bounds)
+            val status = compose.onNodeWithTag("billing_status_area").fetchSemanticsNode().boundsInRoot
+            val accountBounds = compose.onNodeWithTag("billing_account").fetchSemanticsNode().boundsInRoot
+            assertTrue(status.left >= accountBounds.right)
+            assertTrue(status.bottom <= bounds("metric_可用流量").first.y)
+            for ((running, message) in listOf(true to "正在查询", true to "正在登录查询校园网资费…",
+                false to "查询完成", false to BillingProblem.CONNECTION.hint, false to "")) {
+                compose.runOnIdle { billing.value = billing.value.copy(running = running, message = message,
+                    snapshot = if (message == "查询完成") snapshot else billing.value.snapshot) }
+                fixed.forEach { assertEquals("字号 $scale、提示「$message」使 $it 移动", original[it], bounds(it)) }
+                if (running) {
+                    compose.onNodeWithTag("billing_login").assertIsNotEnabled()
+                    compose.onNodeWithTag("billing_accounts").assertIsNotEnabled()
+                    compose.onNodeWithTag("billing_offline").assertIsNotEnabled()
+                }
+                if (message == "正在查询" || message == BillingProblem.CONNECTION.hint) {
+                    if (InstrumentationRegistry.getArguments().getString("gxzSavePreview") == "true") {
+                        val context = InstrumentationRegistry.getInstrumentation().targetContext
+                        context.getExternalFilesDir(null)?.resolve("billing-status-$scale-${if (running) "running" else "error"}.png")
+                            ?.outputStream()?.use { compose.onNodeWithTag("billing_layout_host").captureToImage().asAndroidBitmap()
+                                .compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                    }
+                }
+            }
+            compose.runOnIdle { billing.value = billing.value.copy(message = BillingProblem.CONNECTION.hint) }
+            compose.onNodeWithTag("billing_status_area").performClick()
+            compose.onNodeWithTag("billing_status_detail").assertTextEquals(BillingProblem.CONNECTION.hint)
+            assertTrue(dialogVisible)
+            compose.onNodeWithText("关闭").performClick()
+            compose.runOnIdle { assertFalse(dialogVisible) }
+            fixed.forEach { assertEquals(original[it], bounds(it)) }
+            compose.onNodeWithTag("billing_status_area").performClick()
+            compose.runOnIdle { billing.value = billing.value.copy(message = "") }
+            compose.onNodeWithTag("billing_status_detail").assertDoesNotExist()
+            compose.runOnIdle { assertFalse(dialogVisible) }
+        }
+        compose.runOnIdle { billing.value = billing.value.copy(running = true, message = "正在查询") }
         compose.onNodeWithTag("offline_device_0").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithTag("billing_login").performScrollTo().assertIsNotEnabled()
     }
