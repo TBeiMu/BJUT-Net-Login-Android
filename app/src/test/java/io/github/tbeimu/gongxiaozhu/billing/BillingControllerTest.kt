@@ -190,7 +190,7 @@ class BillingControllerTest {
         controller.requestOffline(demoDevice.sessionId); runCurrent()
         controller.confirmOffline(); controller.confirmOffline(); runCurrent()
         assertEquals(1, fake.offlineCalls); assertEquals(1, suppressed); assertEquals(2, fake.calls)
-        assertTrue(states.last().message.contains("学校已确认"))
+        assertTrue(states.last().message.contains("已注销"))
     }
 
     @Test fun networkSwitchInvalidatesConfirmationAndDoesNotSubmitOffline() = runTest {
@@ -217,7 +217,7 @@ class BillingControllerTest {
         assertEquals(1, fake.offlineCalls)
         assertTrue(blocked); assertTrue(fake.closed)
         assertNull(states.last().snapshot)
-        assertTrue(states.last().message.contains("学校已确认设备注销"))
+        assertTrue(states.last().message.contains("已注销"))
     }
 
     @Test fun networkLossDuringOfflineReportsUnconfirmedOutcomeWithoutRepeatingIt() = runTest {
@@ -287,9 +287,9 @@ class BillingControllerTest {
         assertTrue(fake.closed)
         assertNull(state.snapshot); assertNull(state.loadedAt); assertNull(state.confirmation)
         assertNull(state.webPage); assertNull(state.captcha); assertFalse(state.running)
-        assertTrue(state.message.contains("学校已确认设备注销"))
-        assertTrue(state.message.contains("账号与所选账号不一致"))
-        assertTrue(state.message.contains("重新登录"))
+        assertTrue(state.message.contains("已注销"))
+        assertTrue(state.message.contains("账号不符"))
+        assertTrue(state.message.contains("重登"))
         controller.requestOffline(secondDevice.sessionId); controller.confirmOffline(); runCurrent()
         assertEquals(1, fake.offlineCalls)
         assertEquals(0, replacement.calls)
@@ -341,7 +341,7 @@ class BillingControllerTest {
         controller.requestOffline(demoDevice.sessionId); runCurrent(); controller.confirmOffline(); runCurrent()
         assertFalse(fake.closed); assertFalse(state.running)
         assertEquals(listOf(remaining), state.snapshot?.devices)
-        assertTrue(state.message.contains("学校已确认设备注销"))
+        assertTrue(state.message.contains("已注销"))
         assertTrue(state.message.contains("刷新失败"))
         assertEquals(1, fake.offlineCalls)
     }

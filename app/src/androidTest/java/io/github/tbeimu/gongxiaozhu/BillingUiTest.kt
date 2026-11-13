@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -123,13 +124,11 @@ class BillingUiTest {
         val snapshot = BillingSnapshot(metrics, listOf(device))
         val billing = mutableStateOf(BillingUiState())
         val fontScale = mutableStateOf(1f)
-        var dialogVisible = false
         compose.setContent { BillingPreviewTheme { AppBackdrop(WallpaperState()) {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale.value)) {
                 Box(Modifier.width(360.dp).height(680.dp).testTag("billing_layout_host")) {
-                    BillingScreen(AppUiState(data = data, loading = false, billing = billing.value), Modifier,
-                        {}, {}, {}, { dialogVisible = it })
+                    BillingScreen(AppUiState(data = data, loading = false, billing = billing.value), Modifier, {}, {}, {})
                 }
             }
         } } }
@@ -144,11 +143,19 @@ class BillingUiTest {
             val accountBounds = compose.onNodeWithTag("billing_account").fetchSemanticsNode().boundsInRoot
             assertTrue(status.left >= accountBounds.right)
             assertTrue(status.bottom <= bounds("metric_可用流量").first.y)
-            for ((running, message) in listOf(true to "正在查询", true to "正在登录查询校园网资费…",
-                false to "查询完成", false to BillingProblem.CONNECTION.hint, false to "")) {
+            val notices = listOf(true to "正在查询", true to "正在准备登录页", false to "查询完成") +
+                BillingProblem.entries.map { false to it.hint } + listOf(false to "已注销；账号不符，请重登",
+                    false to "已注销，刷新失败，请重查", false to "")
+            for ((running, message) in notices) {
                 compose.runOnIdle { billing.value = billing.value.copy(running = running, message = message,
                     snapshot = if (message == "查询完成") snapshot else billing.value.snapshot) }
                 fixed.forEach { assertEquals("字号 $scale、提示「$message」使 $it 移动", original[it], bounds(it)) }
+                compose.onNodeWithTag("billing_status_area").assertHasNoClickAction()
+                compose.onNodeWithTag("billing_status").assertTextEquals(message).assertHasNoClickAction()
+                    .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { get ->
+                        val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                        assertTrue(get(results)); assertFalse("字号 $scale 截断提示「$message」", results.single().hasVisualOverflow)
+                    }
                 if (running) {
                     compose.onNodeWithTag("billing_login").assertIsNotEnabled()
                     compose.onNodeWithTag("billing_accounts").assertIsNotEnabled()
@@ -163,17 +170,6 @@ class BillingUiTest {
                     }
                 }
             }
-            compose.runOnIdle { billing.value = billing.value.copy(message = BillingProblem.CONNECTION.hint) }
-            compose.onNodeWithTag("billing_status_area").performClick()
-            compose.onNodeWithTag("billing_status_detail").assertTextEquals(BillingProblem.CONNECTION.hint)
-            assertTrue(dialogVisible)
-            compose.onNodeWithText("关闭").performClick()
-            compose.runOnIdle { assertFalse(dialogVisible) }
-            fixed.forEach { assertEquals(original[it], bounds(it)) }
-            compose.onNodeWithTag("billing_status_area").performClick()
-            compose.runOnIdle { billing.value = billing.value.copy(message = "") }
-            compose.onNodeWithTag("billing_status_detail").assertDoesNotExist()
-            compose.runOnIdle { assertFalse(dialogVisible) }
         }
         compose.runOnIdle { billing.value = billing.value.copy(running = true, message = "正在查询") }
         compose.onNodeWithTag("offline_device_0").performScrollTo().assertIsNotEnabled()

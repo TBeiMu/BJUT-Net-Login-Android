@@ -6,7 +6,6 @@ import android.graphics.BitmapFactory
 import androidx.core.net.toUri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,11 +44,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
 import io.github.tbeimu.gongxiaozhu.billing.BillingMetric
@@ -64,17 +63,10 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
     val metrics = billing.snapshot?.metrics.orEmpty()
     var code by remember(billing.captcha) { mutableStateOf("") }
     var choosingDevice by remember(billing.snapshot?.devices) { mutableStateOf(false) }
-    var showingStatus by remember(billing.message) { mutableStateOf(false) }
-    ReportDialogVisibility(choosingDevice || showingStatus, onDialogVisibilityChanged)
+    ReportDialogVisibility(choosingDevice, onDialogVisibilityChanged)
     val context = LocalContext.current
     val palette = gxz
     val quietBorder = BorderStroke(1.dp, palette.ink.copy(alpha = .16f))
-    if (showingStatus) {
-        AlertDialog(onDismissRequest = { showingStatus = false }, title = { Text("资费查询提示") },
-            properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
-            text = { Text(billing.message, Modifier.verticalScroll(rememberScrollState()).testTag("billing_status_detail")) },
-            confirmButton = { TextButton(onClick = { showingStatus = false }) { Text("关闭") } })
-    }
     if (choosingDevice) {
         AlertDialog(onDismissRequest = { choosingDevice = false }, title = { Text("选择要注销的在线设备") },
             properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
@@ -95,7 +87,7 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
     Column(modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         BillingHeader(state.data.defaultAccount?.let { "${it.label} · ${maskUsername(it.username)}" } ?: "未添加校园网账号",
-            billing.message, billing.running, { showingStatus = true }, Modifier.parallaxHeader(scroll))
+            billing.message, billing.running, Modifier.parallaxHeader(scroll))
         // The four figures arrive as a Z: left to right, then the next row.
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MetricCard("已用流量", metrics["已用流量"], AppGlyph.TRAFFIC, waiting, Modifier.weight(1f).fillMaxHeight().entrance(40, fromScale = .96f))
@@ -167,8 +159,8 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
 }
 
 @Composable
-private fun BillingHeader(account: String, message: String, running: Boolean, onMessage: () -> Unit, modifier: Modifier) {
-    val statusStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodySmall)
+private fun BillingHeader(account: String, message: String, running: Boolean, modifier: Modifier) {
+    val statusStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodySmall).copy(fontSize = 11.sp, lineHeight = 16.sp)
     // Empty/Latin text and wrapped CJK text can have different fallback-font metrics, especially with font scaling.
     val statusPixels = rememberTextMeasurer().measure("查询 WiFi\n查询 WiFi", statusStyle, maxLines = 2).size.height
     val statusHeight = maxOf(48.dp, with(LocalDensity.current) { statusPixels.toDp() })
@@ -181,9 +173,7 @@ private fun BillingHeader(account: String, message: String, running: Boolean, on
             Text(account, Modifier.weight(1f).testTag("billing_account"), style = MaterialTheme.typography.bodyMedium,
                 color = gxz.inkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
             // Reserve two text lines and the loader slot even when idle, so status changes cannot move the actions.
-            Row(Modifier.weight(1f).height(statusHeight).testTag("billing_status_area").then(
-                if (message.isNotBlank()) Modifier.clickable(role = Role.Button, onClickLabel = "查看完整提示", onClick = onMessage)
-                else Modifier), verticalAlignment = Alignment.CenterVertically,
+            Row(Modifier.weight(1f).height(statusHeight).testTag("billing_status_area"), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.size(22.dp)) { if (running) BrandLoader(Modifier.fillMaxSize()) }
                 Text(message, Modifier.weight(1f).testTag("billing_status"), style = statusStyle,

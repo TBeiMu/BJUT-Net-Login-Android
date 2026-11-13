@@ -88,7 +88,7 @@ class HttpBillingSession(boundClient: OkHttpClient) : BillingSession {
             catch (error: BillingException) {
                 if (error.problem == BillingProblem.ACCOUNT_MISMATCH) throw error
                 page = initial
-                notice = "账户刷新未确认，当前显示学校网页返回的数据"
+                notice = "刷新未确认，显示网页数据"
             }
         }
         val metrics = BillingParser.metrics(page)

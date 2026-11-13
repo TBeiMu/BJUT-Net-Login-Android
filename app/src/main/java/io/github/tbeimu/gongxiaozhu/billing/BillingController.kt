@@ -61,7 +61,7 @@ class BillingController(
         val changed = wifi?.key != connection?.key
         wifiObserved = true
         wifi = connection
-        if (changed) reset(if (connection == null) "未连接 WiFi，请先连接校园 WiFi" else "WiFi 已变化，请重新登录查询", clearData = true)
+        if (changed) reset(if (connection == null) "未连接 WiFi" else "网络已变，请重查", clearData = true)
         maybeQuery()
     }
 
@@ -81,13 +81,13 @@ class BillingController(
     fun leaveForeground() {
         foreground = false
         wifiObserved = false
-        reset(if (offlineSent) "已停止等待注销结果，请重新查询在线信息核对"
-            else if (state.running) "查询已暂停，请重新查询" else state.message, clearData = false)
+        reset(if (offlineSent) BillingProblem.OFFLINE.hint
+            else if (state.running) "查询已暂停，请重查" else state.message, clearData = false)
     }
 
     fun setVisible(value: Boolean) {
         visible = value
-        if (!value && (state.webPage != null || state.offerWeb)) reset("已关闭内置登录，请重新查询资费", false)
+        if (!value && (state.webPage != null || state.offerWeb)) reset("网页登录已关闭，请重查", false)
         if (value) maybeQuery()
     }
 
@@ -99,12 +99,12 @@ class BillingController(
         if (!foreground || !wifiObserved || job?.isCompleted == false) return
         if (state.webPage != null) return
         attempted = true
-        val id = accountId ?: run { emit(state.copy(message = "请先添加并选择校园网账号")); return }
-        val selectedWifi = wifi ?: run { emit(state.copy(message = "未连接 WiFi，请先连接校园 WiFi")); return }
+        val id = accountId ?: run { emit(state.copy(message = "请先添加账号")); return }
+        val selectedWifi = wifi ?: run { emit(state.copy(message = "未连接 WiFi")); return }
         val current = session ?: selectedWifi.billingSession?.invoke()?.also { session = it }
-            ?: run { emit(state.copy(message = "当前 WiFi 无法提供自助服务连接")); return }
+            ?: run { emit(state.copy(message = "当前 WiFi 无法查询")); return }
         val token = ++generation
-        emit(state.copy(running = true, message = "正在登录查询校园网资费…", confirmation = null, offerWeb = false))
+        emit(state.copy(running = true, message = "正在查询", confirmation = null, offerWeb = false))
         job = scope.launch {
             try {
                 val selected = credentials(id) ?: throw BillingException(BillingProblem.REJECTED)
@@ -113,7 +113,7 @@ class BillingController(
                     message = result.notice.orEmpty(), loadedAt = System.currentTimeMillis(), diagnostics = current.diagnostics))
             } catch (error: CancellationException) { throw error }
             catch (_: VaultUnavailableException) {
-                if (token == generation) { reset("账号存储不可用，查询已停止", true); storageFailure() }
+                if (token == generation) { reset("账号存储异常，查询停止", true); storageFailure() }
             } catch (error: BillingException) {
                 if (token == generation) {
                     if (error.problem == BillingProblem.ACCOUNT_MISMATCH) {
@@ -143,7 +143,7 @@ class BillingController(
         session?.close()
         val current = selectedWifi.billingSession?.invoke()?.also { session = it } ?: return
         val token = ++generation
-        emit(state.copy(running = true, offerWeb = false, captcha = null, message = "正在准备学校内置登录页…"))
+        emit(state.copy(running = true, offerWeb = false, captcha = null, message = "正在准备登录页"))
         job = scope.launch {
             try {
                 val selected = credentials(id) ?: throw BillingException(BillingProblem.REJECTED)
@@ -151,7 +151,7 @@ class BillingController(
                 if (token == generation) emit(state.copy(running = false, webPage = page,
                     message = "账号密码已预填，请在学校页面点击登录；修改本次密码不会保存", diagnostics = current.diagnostics))
             } catch (error: CancellationException) { throw error }
-            catch (_: VaultUnavailableException) { if (token == generation) { reset("账号存储不可用，查询已停止", true); storageFailure() } }
+            catch (_: VaultUnavailableException) { if (token == generation) { reset("账号存储异常，查询停止", true); storageFailure() } }
             catch (error: BillingException) { if (token == generation) webFailed(current, error.problem) }
             catch (_: Exception) { if (token == generation) webFailed(current, BillingProblem.RESPONSE) }
         }
@@ -161,7 +161,7 @@ class BillingController(
         if (!foreground || job?.isCompleted == false || state.webPage?.token != pageToken) return
         val current = session ?: return
         val token = ++generation
-        emit(state.copy(running = true, message = "正在提交学校网页登录…"))
+        emit(state.copy(running = true, message = "正在网页登录"))
         job = scope.launch {
             try {
                 when (val result = current.submitWeb(pageToken, password, code)) {
@@ -191,8 +191,8 @@ class BillingController(
         }
     }
 
-    fun closeWeb() { reset("已取消内置网页登录，请手动登录查询", clearData = false) }
-    fun unsupportedWeb() { reset("系统 WebView 不支持安全网页登录，请更新系统 WebView，或打开学校自助服务网页", false) }
+    fun closeWeb() { reset("网页登录已取消，请重查", clearData = false) }
+    fun unsupportedWeb() { reset("内置登录不可用，请用网页", false) }
 
     private fun webFailed(current: BillingSession, problem: BillingProblem) {
         if (problem == BillingProblem.ACCOUNT_MISMATCH) {
@@ -208,11 +208,11 @@ class BillingController(
         val device = state.snapshot?.devices?.find { it.sessionId == sessionId } ?: return
         val current = session ?: run { emit(state.copy(message = BillingProblem.EXPIRED.hint)); return }
         val token = ++generation
-        emit(state.copy(running = true, confirmation = null, message = "正在读取设备注销提示…"))
+        emit(state.copy(running = true, confirmation = null, message = "正在读取注销提示"))
         job = scope.launch {
             try {
                 val tip = current.offlineTip()
-                if (token == generation) emit(state.copy(running = false, message = "请确认要注销的设备", confirmation = OfflineConfirmation(device, tip)))
+                if (token == generation) emit(state.copy(running = false, message = "请确认注销设备", confirmation = OfflineConfirmation(device, tip)))
             } catch (error: CancellationException) { throw error }
             catch (error: BillingException) { if (token == generation) emit(state.copy(running = false, message = error.problem.hint)) }
             catch (_: Exception) { if (token == generation) emit(state.copy(running = false, message = BillingProblem.RESPONSE.hint)) }
@@ -230,7 +230,7 @@ class BillingController(
         beforeOffline()
         attempted = true
         offlineSent = true
-        emit(state.copy(running = true, confirmation = null, message = "正在注销选定设备，请勿重复操作…"))
+        emit(state.copy(running = true, confirmation = null, message = "正在注销设备"))
         job = scope.launch {
             try {
                 awaitLoginStopped()
@@ -240,14 +240,14 @@ class BillingController(
                 // A successful offline response is conclusive even if the current WiFi then disconnects.
                 emit(state.copy(snapshot = state.snapshot?.copy(devices = state.snapshot!!.devices.filterNot {
                     it.sessionId == confirmation.device.sessionId
-                }), message = "学校已确认设备注销；正在刷新在线信息…"))
+                }), message = "已注销，正在刷新"))
                 val refreshed = try {
                     val selected = credentials(id) ?: throw BillingException(BillingProblem.EXPIRED)
                     current.refresh(selected)
                 }
                     catch (error: CancellationException) { throw error }
                     catch (_: VaultUnavailableException) {
-                        reset("账号存储不可用，刷新已停止", clearData = true)
+                        reset("账号存储异常，刷新停止", clearData = true)
                         storageFailure()
                         null
                     }
@@ -260,7 +260,7 @@ class BillingController(
                     catch (_: Exception) { null }
                 if (token == generation) emit(state.copy(running = false, snapshot = refreshed ?: state.snapshot,
                     loadedAt = if (refreshed != null) System.currentTimeMillis() else state.loadedAt,
-                    message = if (refreshed != null) "学校已确认设备注销，在线信息已刷新" else "学校已确认设备注销；刷新失败，请稍后核对在线信息"))
+                    message = if (refreshed != null) "已注销，在线信息已刷新" else "已注销，刷新失败，请重查"))
             } catch (error: CancellationException) { throw error }
             catch (error: BillingException) { if (token == generation) emit(state.copy(running = false, message = error.problem.hint)) }
             catch (_: Exception) { if (token == generation) emit(state.copy(running = false, message = BillingProblem.OFFLINE.hint)) }
@@ -270,7 +270,7 @@ class BillingController(
 
     /** A mismatched identity invalidates both the session and every action derived from its data. */
     private fun invalidateAccountSession() {
-        val message = (if (offlineConfirmed) "学校已确认设备注销；" else "") + BillingProblem.ACCOUNT_MISMATCH.hint
+        val message = if (offlineConfirmed) "已注销；账号不符，请重登" else BillingProblem.ACCOUNT_MISMATCH.hint
         // Preserve the confirmed outcome above instead of reset's generic connection-change message.
         offlineSent = false
         offlineConfirmed = false
@@ -280,8 +280,8 @@ class BillingController(
 
     private fun reset(message: String, clearData: Boolean) {
         val actualMessage = if (offlineSent) {
-            if (offlineConfirmed) "学校已确认设备注销；连接已变化，请稍后重新查询在线信息"
-            else "设备注销结果未确认，请重新查询在线信息核对后再操作"
+            if (offlineConfirmed) "已注销；网络已变，请重查"
+            else BillingProblem.OFFLINE.hint
         } else message
         generation++
         job?.cancel()
