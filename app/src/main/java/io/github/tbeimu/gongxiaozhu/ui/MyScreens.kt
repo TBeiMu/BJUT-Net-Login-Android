@@ -31,7 +31,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.tbeimu.gongxiaozhu.BuildConfig
@@ -50,24 +49,19 @@ internal enum class MyDestination(val title: String, val glyph: AppGlyph) {
 
 @Composable
 internal fun MyHomeScreen(state: AppUiState, modifier: Modifier, checkingUpdates: Boolean = false,
-    onOpen: (MyDestination) -> Unit) {
+    nowProvider: () -> java.time.LocalDateTime = ::myGreetingNow, onOpen: (MyDestination) -> Unit) {
     val palette = gxz
     val scroll = rememberScrollState()
+    val moment by rememberMyGreetingMoment(nowProvider)
     Column(modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        val identity = state.schedule.data.identity
-        // Name and masked student number only: no avatar, no summary.
+        // Account remark above a quiet greeting, without an avatar or subtitle badge.
         Column(Modifier.fillMaxWidth().parallaxHeader(scroll).padding(start = 8.dp, end = 8.dp, top = 36.dp, bottom = 18.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(identity?.name?.ifBlank { "同学" } ?: "工小助", Modifier.entrance(0, distance = 10.dp),
+            Text(myProfileTitle(state), Modifier.entrance(0, distance = 10.dp).testTag("my_profile_title"),
                 style = MaterialTheme.typography.displaySmall, color = palette.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            val bound = identity != null && !state.schedule.blocked
-            Text(if (state.schedule.blocked) "课表暂不可用" else identity?.let { maskUsername(it.studentId) } ?: "未绑定课表",
-                Modifier.entrance(Motion.STAGGER, distance = 10.dp).clip(CircleShape).background(palette.glass)
-                    .padding(horizontal = 12.dp, vertical = 5.dp),
-                style = MaterialTheme.typography.labelMedium, color = palette.inkSoft,
-                fontFamily = if (bound) FontFamily.Monospace else null,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(myGreeting(moment), Modifier.entrance(Motion.STAGGER, distance = 10.dp).testTag("my_profile_greeting"),
+                style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
         }
         MyGroup(MyDestination.entries.take(3), checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 2)
         MyGroup(MyDestination.entries.drop(3), checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 5)

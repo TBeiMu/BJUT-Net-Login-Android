@@ -41,9 +41,13 @@ class MyNavigationTest {
         }
         compose.onNodeWithTag("my_UPDATES").performScrollTo().performClick()
         compose.activityRule.scenario.recreate()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("update_card").fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+        }
         compose.onNodeWithTag("update_card").assertExists()
         compose.onNodeWithText("我的",substring=false).performClick()
         compose.onNodeWithTag("my_UPDATES").assertExists()
+        compose.onNodeWithTag("my_profile_greeting").assertExists()
     }
     @Test fun notificationIntentsOpenTheirOwnDetailsAndReturnToMine(){
         val updateRequests=mutableIntStateOf(0)
