@@ -4,6 +4,9 @@ import java.time.LocalDate
 import java.util.UUID
 import kotlinx.serialization.Serializable
 
+private const val MAX_CUSTOM_COURSES = 1000
+private const val MAX_CUSTOM_OCCURRENCES = 60 * 7
+
 @Serializable
 data class CustomOccurrence(val week: Int, val weekday: Int, val lessons: List<Int>)
 @Serializable
@@ -89,11 +92,11 @@ internal fun validateLocalTerms(data: ScheduleData) {
         require(LocalDate.parse(term.firstMonday).dayOfWeek.value == 1)
         require((term.studentId == null) == (term.schoolTermKey == null))
         require(term.studentId == null || (term.studentId.isNotBlank() && term.studentId.length <= 128 && term.schoolTermKey!!.length <= 100))
-        require(term.courses.size <= 1000 && term.courses.map { it.id }.distinct().size == term.courses.size)
+        require(term.courses.size <= MAX_CUSTOM_COURSES && term.courses.map { it.id }.distinct().size == term.courses.size)
         term.courses.forEach { c ->
             require(c.id.isNotBlank() && c.id.length <= 128 && c.name.isNotBlank() && c.name.length <= 300)
             require(c.location.length <= 500 && c.teacher.length <= 500)
-            require(c.occurrences.isNotEmpty() && c.occurrences.size <= 420 && c.occurrences.distinct().size == c.occurrences.size)
+            require(c.occurrences.isNotEmpty() && c.occurrences.size <= MAX_CUSTOM_OCCURRENCES && c.occurrences.distinct().size == c.occurrences.size)
             c.occurrences.forEach { o -> require(o.week in 1..60 && o.weekday in 1..7 && o.lessons.isNotEmpty() &&
                 o.lessons.size <= 20 && o.lessons.all { it in 1..20 } && o.lessons.distinct().size == o.lessons.size) }
         }
@@ -146,11 +149,17 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
     }
     // Adding another weekday to an unchanged course may meet an existing occurrence; keep it only once.
     val sameContent = old != null && old.name == draft.name.trim() && old.location == draft.location.trim() && old.teacher == draft.teacher.trim()
-    val courses = if (!context.deleteOnly && sameContent) local.courses.filterNot { it.id == old!!.id } +
-        old!!.copy(occurrences = (retained + added).distinct().sortedWith(compareBy({ it.week }, { it.weekday }, { it.lessons.first() })))
+    val merged = (retained + added).distinct().sortedWith(compareBy({ it.week }, { it.weekday }, { it.lessons.first() }))
+    // A partial edit can add a second interval on an existing day. Keep each record bounded;
+    // when it no longer fits, preserve the original ID and store only new targets separately.
+    val retainedSet = retained.toSet()
+    val newOccurrences = if (sameContent) added.filterNot { it in retainedSet } else added
+    val courses = if (!context.deleteOnly && sameContent && merged.size <= MAX_CUSTOM_OCCURRENCES)
+        local.courses.filterNot { it.id == old!!.id } + old!!.copy(occurrences = merged)
     else remaining + if (context.deleteOnly) emptyList() else listOf(CustomCourse(
         if (retained.isEmpty() && old != null) old.id else UUID.randomUUID().toString(), draft.name.trim(), draft.location.trim(),
-        draft.teacher.trim(), added))
+        draft.teacher.trim(), newOccurrences))
+    check(courses.size <= MAX_CUSTOM_COURSES, "本地课程数量已达上限（$MAX_CUSTOM_COURSES 条），请删除不需要的课程后再保存")
     val next = local.copy(courses = courses)
     return copy(localTerms = localTerms.filterNot { it.id == next.id } + next,
         selectedLocalTermId = if (complete == null || selectedLocalTermId != null || context.creatingTerm) next.id else null)
