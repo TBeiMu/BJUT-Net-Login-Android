@@ -165,20 +165,18 @@ class HttpPortalTransportTest {
         assertFalse(recorded.path!!.contains("中文"))
     }
 
-    @Test fun postFormEncodesExactPassword() = runBlocking {
+    @Test fun dormLoginEncodesExactPasswordAtItsFixedEndpoint() = runBlocking {
         server.enqueue(MockResponse().setBody("OK"))
         val password = "  demo&+%?=中文#  "
-        transport.execute(PortalRequest(PortalEndpoint.IPV4_LOGIN, listOf("upass" to password, "v46s" to "1")))
+        transport.execute(PortalRequest(PortalEndpoint.DORM_LOGIN, listOf("user_password" to password, "user_account" to "fictional@campus")))
         val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
-        assertEquals("POST", recorded.method)
-        assertTrue(recorded.getHeader("Content-Type")!!.startsWith("application/x-www-form-urlencoded"))
-        val values = recorded.body.readUtf8().split('&').associate {
-            val pair = it.split('=', limit = 2)
-            java.net.URLDecoder.decode(pair[0], "UTF-8") to java.net.URLDecoder.decode(pair[1], "UTF-8")
-        }
-        assertEquals(password, values["upass"])
-        assertEquals("1", values["v46s"])
-        assertNull(recorded.requestUrl!!.query)
+        assertEquals("GET", recorded.method)
+        assertEquals(password, recorded.requestUrl!!.queryParameter("user_password"))
+        assertEquals("fictional@campus", recorded.requestUrl!!.queryParameter("user_account"))
+        assertEquals(2, recorded.requestUrl!!.querySize)
+        assertEquals("10.21.221.98", originalRequests.single().url.host)
+        assertEquals(801, originalRequests.single().url.port)
+        assertEquals("/eportal/", originalRequests.single().url.encodedPath)
     }
 
     @Test fun credentialRedirectIsRejectedWithoutSecondRequest() = runBlocking {
@@ -197,11 +195,11 @@ class HttpPortalTransportTest {
         assertEquals(1, server.requestCount)
     }
 
-    @Test fun serviceUnavailableMustNotAutomaticallyRepeatPostLogin() = runBlocking {
+    @Test fun serviceUnavailableMustNotAutomaticallyRepeatDormLogin() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0"))
-        server.enqueue(MockResponse().setBody("<!--Dr.COMWebLoginID_3.htm-->"))
-        assertEquals(PortalProblem.CONNECTION, failure(PortalRequest(PortalEndpoint.IPV4_LOGIN,
-            listOf("upass" to "demo-secret"))).problem)
+        server.enqueue(MockResponse().setBody("{\"result\":1}"))
+        assertEquals(PortalProblem.CONNECTION, failure(PortalRequest(PortalEndpoint.DORM_LOGIN,
+            listOf("user_password" to "demo-secret"))).problem)
         assertEquals(1, server.requestCount)
     }
 
@@ -215,7 +213,7 @@ class HttpPortalTransportTest {
     @Test fun legacyHtmlCharsetIsDecoded() = runBlocking {
         val text = "<meta charset=gb2312>模拟认证页面"
         server.enqueue(MockResponse().setBody(okio.Buffer().write(text.toByteArray(charset("GB2312")))))
-        assertEquals(text, transport.execute(PortalRequest(PortalEndpoint.IPV4_STATUS)))
+        assertEquals(text, transport.execute(PortalRequest(PortalEndpoint.DORM_STATUS)))
     }
 
     @Test fun cancelledRequestStopsHttpCall() = runBlocking {

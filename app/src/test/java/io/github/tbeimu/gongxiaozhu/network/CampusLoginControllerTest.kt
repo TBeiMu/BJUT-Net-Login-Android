@@ -225,6 +225,34 @@ class CampusLoginControllerTest {
         assertTrue(f.controller.state.value.completed); assertEquals(1, calls)
     }
 
+    @Test fun fastDormConnectionShowsSuccessWithoutReplayingSlowPublicTimeout() = runTest {
+        var publicCancelled = false
+        val transport = object : PortalTransport {
+            override suspend fun execute(request: PortalRequest): String = when (request.endpoint) {
+                PortalEndpoint.PUBLIC_STATUS -> try {
+                    kotlinx.coroutines.delay(5000); throw PortalException(PortalProblem.CONNECTION)
+                } finally { publicCancelled = true }
+                PortalEndpoint.DORM_STATUS -> { kotlinx.coroutines.delay(200); "{\"result\":1}" }
+                else -> error("No credential submission expected")
+            }
+            override suspend fun hasIpv4Internet(): Boolean = error("Authenticated status is sufficient")
+        }
+        val f = Fixture(backgroundScope, CampusLogin(), credentials = { error("Must not read credentials") })
+        val notice = CampusConnectionNotice(backgroundScope)
+        val phases = mutableListOf<CampusTitlePhase?>()
+        notice.setVisible(true)
+        backgroundScope.launch { f.controller.state.collect(notice::update) }
+        backgroundScope.launch { notice.state.collect { phases += it?.phase } }
+        f.ready(WifiConnection("fictional-fast-dorm", transport)); f.start(); runCurrent()
+        advanceTimeBy(200); runCurrent()
+        assertEquals(CampusTitlePhase.CONNECTED, notice.state.value?.phase)
+        assertTrue(f.controller.state.value.completed)
+        assertTrue(publicCancelled)
+        advanceTimeBy(5000); runCurrent()
+        assertFalse(phases.contains(CampusTitlePhase.TIMED_OUT))
+        assertTrue(f.controller.state.value.completed); assertEquals(1, f.starts.size)
+    }
+
     @Test fun shortTitlesNeverCancelTheTaskAndHardDeadlineDoesNotReplayThem() = runTest {
         var calls = 0
         val f = Fixture(backgroundScope, CampusAuthenticator { _, _, _, _ -> calls++; awaitCancellation() })

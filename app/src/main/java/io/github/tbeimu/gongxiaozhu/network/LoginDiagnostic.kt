@@ -4,8 +4,7 @@ import kotlinx.coroutines.CancellationException
 
 enum class LoginStep(val title: String) {
     PUBLIC_STATUS("公共认证状态"), PUBLIC_LOGIN("公共认证提交"),
-    DORM_STATUS("宿舍认证状态"), DORM_LOGIN("宿舍第一阶段提交"),
-    IPV4_STATUS("二次认证状态"), IPV4_LOGIN("二次认证提交"), INTERNET("IPv4 联网检查"),
+    DORM_STATUS("宿舍认证状态"), DORM_LOGIN("宿舍认证提交"), INTERNET("IPv4 联网检查"),
 }
 enum class LoginStepResult(val title: String) { RESPONSE("已返回"), ONLINE("已联网"), UNCONFIRMED("未确认"), FAILED("请求失败"), CANCELLED("已取消") }
 data class LoginDiagnostic(val step: LoginStep, val elapsedMs: Long, val result: LoginStepResult)

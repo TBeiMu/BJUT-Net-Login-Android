@@ -29,12 +29,4 @@ object PortalParser {
         json.parseToJsonElement(payload) as? JsonObject
     }.getOrNull()
 
-    fun ipv4Status(text: String): Boolean? = when {
-        text.contains("<!--Dr.COMWebLoginID_1.htm-->") -> true
-        text.contains("<!--Dr.COMWebLoginID_0.htm-->") &&
-            Regex("(?:name\\s*=\\s*[\"']?DDDDD|DDDDD\\s*:)", RegexOption.IGNORE_CASE).containsMatchIn(text) -> false
-        else -> null
-    }
-
-    fun ipv4Accepted(text: String) = text.contains("<!--Dr.COMWebLoginID_3.htm-->")
 }

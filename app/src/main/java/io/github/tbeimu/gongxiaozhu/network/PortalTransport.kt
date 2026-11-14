@@ -17,20 +17,17 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.net.Inet4Address
 import okhttp3.Call
 import okhttp3.Callback
-import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
 /** Fixed origins, ports, paths and methods; credentials cannot select a destination. */
-enum class PortalEndpoint(val url: String, val post: Boolean = false) {
+enum class PortalEndpoint(val url: String) {
     PUBLIC_STATUS("http://10.21.251.3/drcom/chkstatus"),
     PUBLIC_LOGIN("http://10.21.251.3/drcom/login"),
     DORM_STATUS("http://10.21.221.98/drcom/chkstatus"),
     DORM_LOGIN("http://10.21.221.98:801/eportal/"),
-    IPV4_STATUS("http://172.30.201.2/"),
-    IPV4_LOGIN("http://172.30.201.2/", post = true),
 }
 
 class PortalRequest(val endpoint: PortalEndpoint, val parameters: List<Pair<String, String>> = emptyList()) {
@@ -79,17 +76,10 @@ class HttpPortalTransport(private val calls: Call.Factory, private val ipv4Calls
     override suspend fun execute(request: PortalRequest): String {
         val builder = Request.Builder().header("User-Agent", "GongXiaoZhu/0.1 Android")
             .header("Cache-Control", "no-store")
-        if (request.endpoint.post) {
-            val form = FormBody.Builder(Charsets.UTF_8).apply {
-                request.parameters.forEach { (key, value) -> add(key, value) }
-            }.build()
-            builder.url(request.endpoint.url).post(form)
-        } else {
-            val url = request.endpoint.url.toHttpUrl().newBuilder().apply {
-                request.parameters.forEach { (key, value) -> addQueryParameter(key, value) }
-            }.build()
-            builder.url(url)
-        }
+        val url = request.endpoint.url.toHttpUrl().newBuilder().apply {
+            request.parameters.forEach { (key, value) -> addQueryParameter(key, value) }
+        }.build()
+        builder.url(url)
         return executeHttp(builder.build(), calls)
     }
 
@@ -153,7 +143,7 @@ class HttpPortalTransport(private val calls: Call.Factory, private val ipv4Calls
                                 throw PortalException(PortalProblem.RESPONSE)
                             }
                             val bytes = source.readByteArray()
-                            // Old lgn pages may declare GB2312/GBK in HTML instead of headers.
+                            // Portal pages may declare GB2312/GBK in HTML instead of headers.
                             val headerCharset = body.contentType()?.charset()
                             val meta = Regex("charset\\s*=\\s*[\"']?([a-zA-Z0-9_-]+)", RegexOption.IGNORE_CASE)
                                 .find(bytes.toString(Charsets.ISO_8859_1).take(4096))?.groupValues?.get(1)

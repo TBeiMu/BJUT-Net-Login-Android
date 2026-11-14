@@ -19,10 +19,10 @@ import org.junit.runner.RunWith
 class WifiMonitorTest {
     @Test fun cleartextIsRestrictedToKnownCampusHosts() {
         val policy = NetworkSecurityPolicy.getInstance()
-        listOf("10.21.251.3", "10.21.221.98", "172.30.201.2").forEach {
+        listOf("10.21.251.3", "10.21.221.98").forEach {
             assertTrue(policy.isCleartextTrafficPermitted(it))
         }
-        listOf("example.org", "connectivitycheck.platform.hicloud.com", "10.21.251.4", "172.30.201.10", "127.0.0.1").forEach {
+        listOf("example.org", "connectivitycheck.platform.hicloud.com", "10.21.251.4", "172.30.201.2", "172.30.201.10", "127.0.0.1").forEach {
             assertFalse(policy.isCleartextTrafficPermitted(it))
         }
         assertFalse(policy.isCleartextTrafficPermitted)
