@@ -2,15 +2,15 @@
 
 北京工业大学 Android 校园助手。整学期课表、校园网登录和资费查询集中在一个 App 中。
 
-**v0.5.3 正式版 · Android 12 及以上 · versionCode 34**
+**v0.5.4 正式版 · Android 12 及以上 · versionCode 35**
 
 用户已确认 v0.4.8 的主要功能基本齐全并可用。项目进入维护与体验优化，源码仓库为 [TBeiMu/BJUT_gxz](https://github.com/TBeiMu/BJUT_gxz)。
 
-v0.5.3 支持自定义课程星期多选，精简课程详情并修复多日调课保存；“我的”顶部显示备注与时段暖心文案，校园网已认证时立即确认连接，移除宿舍旧二次认证。保留小鸟图标、原开屏与加载动画，沿用固定签名，可覆盖升级，详见 [更新说明](docs/releases/v0.5.3.md)。
+v0.5.4 修复校园网已经确认在线，却因另一端请求清理较慢而先显示“登录超时”的问题；成功立即显示，清理期间防止重复认证。保留 v0.5.3 的课程星期多选、精简详情和个人页暖心文案、小鸟图标、原开屏与加载动画，沿用固定签名，可覆盖升级，详见 [更新说明](docs/releases/v0.5.4.md)。
 
 ## 下载与安装
 
-[下载 v0.5.3 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.3/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.3/SHA256SUMS.txt)
+[下载 v0.5.4 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.4/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.4/SHA256SUMS.txt)
 
 下载后使用手机的浏览器或文件管理器打开 APK，按系统提示允许“安装未知应用”。已有正式版直接覆盖安装，账号、默认账号、课表和设置会保留；请勿先卸载或清除应用数据。调试版与正式版独立安装。
 
@@ -60,7 +60,7 @@ v0.5.2 支持姓名补全：首次添加账号时备注留空，优先使用本�
 
 任一端点确认已认证后立即完成检查并取消另一端探测，避免因另一端 5 秒超时而延后成功提示；当前宿舍只需单次认证，已移除旧接口的二次认证。尚未确认在线时仍先识别正确网络，再提交选定账号。已合入 v0.5.3，见 [宿舍认证与快速确认验证](docs/testing/宿舍认证与快速确认验证.md)。
 
-v0.5.3 发布后的源码进一步修复了请求取消清理较慢时仍先显示“登录超时”的问题：确认在线后立即显示成功，清理结束前保持原任务，避免重复登录。此项尚未发布 APK，见 [认证成功与请求清理分离验证](docs/testing/认证成功与请求清理分离验证.md)。
+v0.5.4 进一步修复了请求取消清理较慢时仍先显示“登录超时”的问题：确认在线后立即显示成功，清理结束前保持原任务，避免重复登录。见 [认证成功与请求清理分离验证](docs/testing/认证成功与请求清理分离验证.md)和 [v0.5.4 验证记录](docs/testing/v0.5.4验证.md)。
 
 ### 查询资费与在线设备
 
@@ -133,3 +133,5 @@ v0.4.12 完成 Debug／Release 各 284 项单元测试、两种 Lint、签名构
 v0.5.2 包含截至 `dd322da` 的维护与课程编辑功能，验证及公开附件核验见 [v0.5.2 验证记录](docs/testing/v0.5.2验证.md)。
 
 v0.5.3 包含截至 `c9e194d` 的已推送改动，发布验证及公开附件核验见 [v0.5.3 验证记录](docs/testing/v0.5.3验证.md)。
+
+v0.5.4 包含已审查通过的 `9654774` 认证提示修复，发布验证及公开附件核验见 [v0.5.4 验证记录](docs/testing/v0.5.4验证.md)。
