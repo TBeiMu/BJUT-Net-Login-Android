@@ -12,15 +12,21 @@ import kotlinx.coroutines.selects.select
 data class LoginResult(val message: String, val mode: NetworkMode? = null, val needsChoice: Boolean = false,
     val completed: Boolean = false)
 
+/** Confirmed connectivity is distinct from the lifetime of request cleanup. */
+fun interface LoginProgress {
+    operator fun invoke(message: String)
+    fun confirmed(result: LoginResult) {}
+}
+
 fun interface CampusAuthenticator {
     suspend fun login(transport: PortalTransport, mode: NetworkMode, credentials: suspend () -> AccountDraft?,
-        progress: (String) -> Unit): LoginResult
+        progress: LoginProgress): LoginResult
 }
 
 /** Recognition and preflight never send credentials; the current dorm flow uses one login endpoint. */
 class CampusLogin : CampusAuthenticator {
     override suspend fun login(transport: PortalTransport, mode: NetworkMode, credentials: suspend () -> AccountDraft?,
-        progress: (String) -> Unit): LoginResult {
+        progress: LoginProgress): LoginResult {
         val confirmed = ConfirmedState()
         val result = try {
             withTimeout(60_000) { authenticate(transport, mode, credentials, progress, confirmed) }
@@ -39,19 +45,19 @@ class CampusLogin : CampusAuthenticator {
             val online = try { withTimeout(10_000) { transport.hasIpv4Internet() } }
                 catch (_: TimeoutCancellationException) { false }
                 catch (_: PortalException) { false }
-            if (online) return internetConfirmed()
+            if (online) return confirmed.success(internetConfirmed(), progress)
         }
         return result
     }
 
     private suspend fun authenticate(transport: PortalTransport, mode: NetworkMode, credentials: suspend () -> AccountDraft?,
-        progress: (String) -> Unit, confirmed: ConfirmedState): LoginResult {
+        progress: LoginProgress, confirmed: ConfirmedState): LoginResult {
         progress("正在检查校园认证状态…")
         var publicStatus: Boolean? = null
         var dormStatus: Boolean? = null
         var dormInternet: Boolean? = null
         val selected = if (mode == NetworkMode.AUTO) {
-            val recognition = recognize(transport)
+            val recognition = recognize(transport, confirmed, progress)
             recognition.completed?.let { return it }
             publicStatus = recognition.publicStatus
             dormStatus = recognition.dormStatus
@@ -72,16 +78,16 @@ class CampusLogin : CampusAuthenticator {
             NetworkMode.AUTO -> error("Explicit mode required")
         }
         confirmed.dormRecognized = selected == NetworkMode.DORM_WIFI
-        if (gatewayStatus) return alreadyAuthenticated(selected)
+        if (gatewayStatus) return confirmed.success(alreadyAuthenticated(selected), progress)
         // Check before reading/sending credentials even when the recognized gateway still says 0.
-        if (confirmed.dormRecognized && (dormInternet ?: transport.hasIpv4Internet())) return internetConfirmed()
+        if (confirmed.dormRecognized && (dormInternet ?: transport.hasIpv4Internet())) return confirmed.success(internetConfirmed(), progress)
         val account = credentials() ?: return LoginResult("请先添加并设置默认校园网账号", selected)
         progress(if (selected == NetworkMode.PUBLIC_WIFI) "正在登录公共 WiFi…" else "正在登录宿舍 WiFi…")
         val request = if (selected == NetworkMode.PUBLIC_WIFI) publicLogin(account) else dormLogin(account)
         if (!PortalParser.result(transport.execute(request))) throw PortalException(PortalProblem.REJECTED)
         val statusEndpoint = if (selected == NetworkMode.PUBLIC_WIFI) PortalEndpoint.PUBLIC_STATUS else PortalEndpoint.DORM_STATUS
         if (!requiredStatus(transport, statusEndpoint)) throw PortalException(PortalProblem.UNCONFIRMED)
-        return LoginResult(if (selected == NetworkMode.PUBLIC_WIFI) "公共 WiFi 认证成功" else "宿舍 WiFi 认证成功", selected, completed = true)
+        return confirmed.success(LoginResult(if (selected == NetworkMode.PUBLIC_WIFI) "公共 WiFi 认证成功" else "宿舍 WiFi 认证成功", selected, completed = true), progress)
     }
 
     private fun alreadyAuthenticated(mode: NetworkMode) = LoginResult(
@@ -96,7 +102,8 @@ class CampusLogin : CampusAuthenticator {
         val dormInternet: Boolean? = null, val completed: LoginResult? = null)
 
     /** Online proof can finish early; selecting a destination for credentials still waits for both probes. */
-    private suspend fun recognize(transport: PortalTransport): AutomaticRecognition = coroutineScope {
+    private suspend fun recognize(transport: PortalTransport, confirmed: ConfirmedState,
+        progress: LoginProgress): AutomaticRecognition = coroutineScope {
         val public = async {
             val status = probe(transport, PortalEndpoint.PUBLIC_STATUS)
             AutomaticProbe(NetworkMode.PUBLIC_WIFI, status, completed = if (status == true) alreadyAuthenticated(NetworkMode.PUBLIC_WIFI) else null)
@@ -113,9 +120,9 @@ class CampusLogin : CampusAuthenticator {
         }
         try {
             val first = select<AutomaticProbe> { public.onAwait { it }; dorm.onAwait { it } }
-            first.completed?.let { return@coroutineScope AutomaticRecognition(completed = it) }
+            first.completed?.let { return@coroutineScope AutomaticRecognition(completed = confirmed.success(it, progress)) }
             val second = if (first.mode == NetworkMode.PUBLIC_WIFI) dorm.await() else public.await()
-            second.completed?.let { return@coroutineScope AutomaticRecognition(completed = it) }
+            second.completed?.let { return@coroutineScope AutomaticRecognition(completed = confirmed.success(it, progress)) }
             val publicProbe = if (first.mode == NetworkMode.PUBLIC_WIFI) first else second
             val dormProbe = if (first.mode == NetworkMode.DORM_WIFI) first else second
             AutomaticRecognition(publicProbe.status, dormProbe.status, dormProbe.internet)
@@ -149,7 +156,18 @@ class CampusLogin : CampusAuthenticator {
     private class ConfirmedState {
         var mode: NetworkMode? = null
         var dormRecognized = false
+        private var confirmedResult: LoginResult? = null
 
-        fun failure(problem: PortalProblem) = LoginResult(problem.hint, mode = mode)
+        fun success(result: LoginResult, progress: LoginProgress): LoginResult {
+            check(result.completed && !result.needsChoice)
+            if (confirmedResult == null) {
+                confirmedResult = result
+                mode = result.mode
+                progress.confirmed(result)
+            }
+            return confirmedResult!!
+        }
+
+        fun failure(problem: PortalProblem) = confirmedResult ?: LoginResult(problem.hint, mode = mode)
     }
 }

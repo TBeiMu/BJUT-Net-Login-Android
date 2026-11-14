@@ -57,6 +57,7 @@ class CampusLoginController(
         val started = CompletableDeferred<Unit>()
         var cancelled = false
         var cancelMessage = "认证已取消；已建立的网络连接不会退出"
+        var confirmedResult: LoginResult? = null
     }
 
     fun awaitWifiSnapshot() { hasWifiSnapshot = false }
@@ -128,30 +129,39 @@ class CampusLoginController(
                             mutable.value = state.value.copy(diagnostics = (state.value.diagnostics + diagnostic).takeLast(24))
                         }
                     }
-                    val result = authenticator.login(transport, current.mode, { credentials(current.accountId) }) { message ->
-                        if (!current.cancelled) mutable.value = state.value.copy(message = message)
+                    val progress = object : LoginProgress {
+                        override fun invoke(message: String) {
+                            scope.launch {
+                                if (owns(current) && current.confirmedResult == null && state.value.outcome == null) {
+                                    mutable.value = state.value.copy(message = message)
+                                }
+                            }
+                        }
+                        override fun confirmed(result: LoginResult) {
+                            if (!result.completed || result.needsChoice) return
+                            scope.launch {
+                                if (owns(current) && current.confirmedResult == null) publishResult(current, result)
+                            }
+                        }
                     }
-                    if (!current.cancelled) mutable.value = state.value.copy(message = result.message,
-                        mode = result.mode, needsChoice = result.needsChoice, completed = result.completed,
-                        outcome = when {
-                            result.completed -> LoginTaskOutcome.SUCCESS
-                            result.needsChoice -> LoginTaskOutcome.NEEDS_CHOICE
-                            else -> LoginTaskOutcome.FAILED
-                        })
+                    val result = authenticator.login(transport, current.mode, { credentials(current.accountId) }, progress)
+                    publishResult(current, result)
                 }
             } catch (_: TimeoutCancellationException) {
-                mutable.value = state.value.copy(message = "认证超时，已停止；请手动检查联网状态",
-                    completed = false, outcome = LoginTaskOutcome.TIMED_OUT)
+                if (owns(current)) {
+                    if (current.confirmedResult != null) publishResult(current, current.confirmedResult!!)
+                    else mutable.value = state.value.copy(message = "认证超时，已停止；请手动检查联网状态",
+                        completed = false, outcome = LoginTaskOutcome.TIMED_OUT)
+                }
             } catch (error: CancellationException) {
-                mutable.value = state.value.copy(message = current.cancelMessage, completed = false, needsChoice = false,
-                    outcome = LoginTaskOutcome.CANCELLED)
+                if (attempt === current) mutable.value = state.value.copy(message = current.cancelMessage,
+                    completed = false, needsChoice = false, outcome = LoginTaskOutcome.CANCELLED)
                 throw error
             } catch (_: VaultUnavailableException) {
                 storageFailure()
-                mutable.value = state.value.copy(message = "账号存储不可用，认证已停止", outcome = LoginTaskOutcome.FAILED)
+                publishResult(current, LoginResult("账号存储不可用，认证已停止"))
             } catch (_: Exception) {
-                mutable.value = state.value.copy(message = "认证未完成，请检查网络和默认账号后手动重试",
-                    outcome = LoginTaskOutcome.FAILED)
+                publishResult(current, LoginResult("认证未完成，请检查网络和默认账号后手动重试"))
             }
         }.also { task -> task.invokeOnCompletion {
             scope.launch {
@@ -168,6 +178,22 @@ class CampusLoginController(
         job?.start()
         try { startService(current.id) }
         catch (_: Exception) { cancel(current.id, "无法启动认证服务，请回到 App 后手动重试") }
+    }
+
+    private fun owns(current: Attempt): Boolean = attempt === current && !current.cancelled &&
+        wifi?.key == current.wifi.key && state.value.taskId == current.id
+
+    private fun publishResult(current: Attempt, result: LoginResult) {
+        if (!owns(current)) return
+        val accepted = current.confirmedResult ?: result
+        if (accepted.completed && !accepted.needsChoice) current.confirmedResult = accepted
+        mutable.value = state.value.copy(message = accepted.message, mode = accepted.mode,
+            needsChoice = accepted.needsChoice, completed = accepted.completed,
+            outcome = when {
+                accepted.completed -> LoginTaskOutcome.SUCCESS
+                accepted.needsChoice -> LoginTaskOutcome.NEEDS_CHOICE
+                else -> LoginTaskOutcome.FAILED
+            })
     }
 
     /** An in-memory, single-use start. Replayed or restored service intents cannot send credentials. */
