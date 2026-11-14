@@ -77,9 +77,14 @@ class CourseEditingUiTest {
             compose.onNodeWithTag("save_course").assertIsNotEnabled()
             compose.onNodeWithTag("course_name").performTextInput("离线实验")
             compose.onNodeWithTag("course_location").performTextInput("测试教室")
+            compose.onNodeWithTag("course_day_3").performScrollTo().performClick()
+            compose.onNodeWithTag("course_day_1").assertIsSelected()
+            compose.onNodeWithTag("course_day_3").assertIsSelected()
             restoration.emulateSavedInstanceStateRestore()
             compose.onNodeWithTag("course_name").assertTextContains("离线实验")
             compose.onNodeWithTag("course_location").assertTextContains("测试教室")
+            compose.onNodeWithTag("course_day_1").assertIsSelected()
+            compose.onNodeWithTag("course_day_3").assertIsSelected()
             compose.onNodeWithTag("term_weeks").performScrollTo().performTextReplacement("61")
             compose.onNodeWithTag("save_course").assertIsNotEnabled()
             compose.onNodeWithTag("term_weeks").performTextReplacement("20")
@@ -87,6 +92,7 @@ class CourseEditingUiTest {
             compose.onNodeWithTag("save_course").performClick()
             assertNull(repository.load().identity)
             assertEquals("离线实验", repository.snapshot().localTerms.single().courses.single().name)
+            assertEquals(listOf(1, 3), repository.snapshot().localTerms.single().courses.single().occurrences.map { it.weekday })
             compose.onNodeWithTag("schedule_mode").assertExists().performClick()
             compose.onNodeWithTag("schedule_pager").assertExists()
         } finally { repository.clear() }
@@ -108,6 +114,14 @@ class CourseEditingUiTest {
             }) }
         } }
         compose.onNodeWithTag("agenda_course_0_1").performClick()
+        compose.onNodeWithText("课程详情").assertDoesNotExist()
+        val editBounds = compose.onNodeWithTag("course_detail_edit_0").fetchSemanticsNode().boundsInRoot
+        val deleteBounds = compose.onNodeWithTag("course_detail_delete_0").fetchSemanticsNode().boundsInRoot
+        val closeBounds = compose.onNodeWithTag("course_detail_close").fetchSemanticsNode().boundsInRoot
+        assertEquals(editBounds.center.y, deleteBounds.center.y, 1f)
+        assertEquals(editBounds.center.y, closeBounds.center.y, 1f)
+        assertTrue(closeBounds.left >= deleteBounds.right)
+        capture("course_details", "details")
         compose.onNodeWithText("编辑", substring = false).performClick()
         compose.onNodeWithTag("course_name").performTextReplacement("临时调课")
         compose.onNodeWithTag("course_day_3").performScrollTo().performClick()
@@ -136,7 +150,39 @@ class CourseEditingUiTest {
         compose.onNodeWithTag("save_course").assertIsNotEnabled()
         compose.onNodeWithTag("course_last").performTextReplacement("20")
         compose.onNodeWithTag("save_course").assertIsEnabled()
+        val selectedDay = context.defaultWeekday
+        compose.onNodeWithTag("course_day_$selectedDay").performScrollTo().performClick()
+        compose.onNodeWithTag("save_course").assertIsNotEnabled()
+        compose.onNodeWithTag("course_day_$selectedDay").performClick()
+        val secondDay = if (selectedDay == 7) 1 else selectedDay + 1
+        compose.onNodeWithTag("course_day_$secondDay").performClick()
+        compose.onNodeWithTag("course_day_$selectedDay").assertIsSelected()
+        compose.onNodeWithTag("course_day_$secondDay").assertIsSelected()
+        compose.onNodeWithTag("save_course").assertIsEnabled()
         capture("course_editor", "editor-large")
+    }
+    @Test fun overlappingDetailsCloseFromTheRightWithLargeFonts() {
+        var visible by mutableStateOf(true)
+        var edited: ScheduleCourse? = null
+        val courses = schoolData().complete!!.weeks[0].courses.let { listOf(it.single(), it.single().copy(id = "second", name = "重叠测试课")) }
+        compose.setContent { GongXiaoZhuTheme {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 1.8f)) {
+                if (visible) CourseDetails(courses, emptyMap(), editable = true, onEdit = { course, _ -> edited = course }, onDismiss = { visible = false })
+            }
+        } }
+        compose.onNodeWithText("课程详情").assertDoesNotExist()
+        compose.onNodeWithText("重叠课程 · 2 门").assertDoesNotExist()
+        compose.onNodeWithTag("course_detail_edit_0").performScrollTo().performClick()
+        assertEquals(courses.first(), edited)
+        compose.onNodeWithTag("course_detail_close").performScrollTo().assertIsDisplayed()
+        val deleteBounds = compose.onNodeWithTag("course_detail_delete_1").fetchSemanticsNode().boundsInRoot
+        val closeBounds = compose.onNodeWithTag("course_detail_close").fetchSemanticsNode().boundsInRoot
+        assertEquals(deleteBounds.center.y, closeBounds.center.y, 1f)
+        assertTrue(closeBounds.left >= deleteBounds.right)
+        capture("course_details", "details-large")
+        compose.onNodeWithTag("course_detail_close").performClick()
+        compose.onNodeWithTag("course_details").assertDoesNotExist()
     }
     private fun capture(tag: String, name: String) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

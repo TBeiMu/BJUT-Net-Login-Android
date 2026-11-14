@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import io.github.tbeimu.gongxiaozhu.schedule.*
 import io.github.tbeimu.gongxiaozhu.network.CampusConnectionNotice
 import java.time.LocalDate
@@ -750,11 +751,12 @@ internal fun courseColor(course: ScheduleCourse): Color = courseTone(course, fal
 internal fun CourseDetails(courses: List<ScheduleCourse>, toneOrder: Map<String, Int>, editable: Boolean = false,
     onEdit: (ScheduleCourse, Boolean) -> Unit = { _, _ -> }, onDismiss: () -> Unit) {
     val palette = gxz
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(if(courses.size>1) "重叠课程 · ${courses.size} 门" else "课程详情") },
-        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            courses.forEach { course ->
+    Dialog(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).testTag("course_details"),
+            verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            courses.forEachIndexed { index, course ->
                 val tone = courseTone(course, palette.dark, toneOrder)
-                Column(Modifier.fillMaxWidth().clip(TileShape).background(tone.fill).padding(16.dp),
+                Column(Modifier.fillMaxWidth().testTag("course_detail_$index").clip(TileShape).background(tone.fill).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(course.name, style = MaterialTheme.typography.titleMedium, color = tone.text)
                     Spacer(Modifier.height(2.dp))
@@ -764,13 +766,18 @@ internal fun CourseDetails(courses: List<ScheduleCourse>, toneOrder: Map<String,
                     DetailRow("教师", course.teacher.ifBlank { "未提供" }, tone)
                     if(course.timeText.isNotBlank()) DetailRow("时间", course.timeText, tone)
                     if(course.weeksText.isNotBlank()) DetailRow("周次", course.weeksText, tone)
-                    if (editable) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { onEdit(course, false) }) { Text("编辑") }
-                        TextButton(onClick = { onEdit(course, true) }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (editable) {
+                            TextButton(onClick = { onEdit(course, false) }, modifier = Modifier.testTag("course_detail_edit_$index")) { Text("编辑", color = tone.text) }
+                            TextButton(onClick = { onEdit(course, true) }, modifier = Modifier.testTag("course_detail_delete_$index")) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        if (index == courses.lastIndex) TextButton(onClick = onDismiss, modifier = Modifier.testTag("course_detail_close")) { Text("关闭", color = tone.text) }
                     }
                 }
             }
-        } }, confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
+        }
+    }
 }
 
 @Composable

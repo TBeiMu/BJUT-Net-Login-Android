@@ -54,7 +54,7 @@ data class CourseEditContext(val token: String = UUID.randomUUID().toString(), v
     val localTermId: String?, val course: ScheduleCourse?, val availableWeeks: List<Int>,
     val defaultWeek: Int, val defaultWeekday: Int, val firstMonday: String, val weekCount: Int,
     val deleteOnly: Boolean = false, val creatingTerm: Boolean = false)
-data class CourseDraft(val name: String, val location: String, val teacher: String, val weekday: Int,
+data class CourseDraft(val name: String, val location: String, val teacher: String, val weekdays: List<Int>,
     val sourceWeeks: List<Int>, val targetWeeks: List<Int>, val lessons: List<Int>,
     val firstMonday: String, val weekCount: Int)
 
@@ -108,7 +108,9 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
     if (!context.deleteOnly) {
         check(draft.name.isNotBlank() && draft.name.length <= 300, "请填写课程名（最多 300 字）")
         check(draft.location.length <= 500 && draft.teacher.length <= 500, "教室或教师信息过长")
-        check(draft.weekday in 1..7 && draft.weekCount in 1..60, "请选择有效星期和学期周数")
+        check(draft.weekdays.isNotEmpty() && draft.weekdays.all { it in 1..7 } &&
+            draft.weekdays.distinct().size == draft.weekdays.size && draft.weekCount in 1..60, "请选择有效星期和学期周数")
+        check(source?.source != CourseSource.SCHOOL || draft.weekdays.size == 1, "学校课程调课请选择一个星期")
         check(draft.targetWeeks.isNotEmpty() && draft.targetWeeks.all { it in 1..draft.weekCount }, "请选择有效上课周次")
         check(draft.lessons.isNotEmpty() && draft.lessons.distinct().size == draft.lessons.size && draft.lessons.all { it in 1..20 }, "节次范围须为第 1–20 节")
         check(context.creatingTerm || (draft.firstMonday == context.firstMonday && draft.weekCount == context.weekCount), "学期已变化，请重新编辑")
@@ -121,7 +123,7 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
             w.number in draft.sourceWeeks && it.sameSeries(source)
         } + if (!context.deleteOnly && w.number in draft.targetWeeks) listOf(source.copy(name = draft.name.trim(),
             location = draft.location.trim(), teacher = draft.teacher.trim(), lessons = draft.lessons.sorted(),
-            date = monday.plusWeeks(w.number - 1L).plusDays(draft.weekday - 1L).toString(), timeText = "", weeksText = "第 ${w.number} 周")) else emptyList()) }
+            date = monday.plusWeeks(w.number - 1L).plusDays(draft.weekdays.single() - 1L).toString(), timeText = "", weeksText = "第 ${w.number} 周")) else emptyList()) }
         return copy(complete = school.copy(weeks = weeks))
     }
     var local = localTerms.find { it.id == context.localTermId }
@@ -139,10 +141,17 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
     val retained = old?.occurrences.orEmpty().filterNot { o -> o.week in draft.sourceWeeks &&
         o.weekday == context.defaultWeekday && o.lessons == source?.lessons }
     val remaining = local.courses.filterNot { it.id == old?.id } + if (retained.isNotEmpty()) listOf(old!!.copy(occurrences = retained)) else emptyList()
-    val changed = if (context.deleteOnly) emptyList() else listOf(CustomCourse(
+    val added = if (context.deleteOnly) emptyList() else draft.targetWeeks.distinct().sorted().flatMap { week ->
+        draft.weekdays.sorted().map { day -> CustomOccurrence(week, day, draft.lessons.sorted()) }
+    }
+    // Adding another weekday to an unchanged course may meet an existing occurrence; keep it only once.
+    val sameContent = old != null && old.name == draft.name.trim() && old.location == draft.location.trim() && old.teacher == draft.teacher.trim()
+    val courses = if (!context.deleteOnly && sameContent) local.courses.filterNot { it.id == old!!.id } +
+        old!!.copy(occurrences = (retained + added).distinct().sortedWith(compareBy({ it.week }, { it.weekday }, { it.lessons.first() })))
+    else remaining + if (context.deleteOnly) emptyList() else listOf(CustomCourse(
         if (retained.isEmpty() && old != null) old.id else UUID.randomUUID().toString(), draft.name.trim(), draft.location.trim(),
-        draft.teacher.trim(), draft.targetWeeks.distinct().sorted().map { CustomOccurrence(it, draft.weekday, draft.lessons.sorted()) }))
-    val next = local.copy(courses = remaining + changed)
+        draft.teacher.trim(), added))
+    val next = local.copy(courses = courses)
     return copy(localTerms = localTerms.filterNot { it.id == next.id } + next,
         selectedLocalTermId = if (complete == null || selectedLocalTermId != null || context.creatingTerm) next.id else null)
 }

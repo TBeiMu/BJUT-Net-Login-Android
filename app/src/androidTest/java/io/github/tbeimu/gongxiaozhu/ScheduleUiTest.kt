@@ -51,6 +51,7 @@ class ScheduleUiTest {
                 }
                 finish(System.currentTimeMillis())
             }
+            reloadScheduleFixture(context)
         }
         override fun after() {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -68,7 +69,9 @@ class ScheduleUiTest {
         compose.onNodeWithText("第 2 周").assertExists()
         screenshot("schedule-preview.png")
         compose.onNodeWithText("重叠课").performClick()
-        compose.onNodeWithText("重叠课程 · 2 门").assertExists()
+        compose.onNodeWithTag("course_detail_0").assertExists()
+        compose.onNodeWithTag("course_detail_1").assertExists()
+        compose.onNodeWithText("课程详情").assertDoesNotExist()
         compose.onNodeWithText("关闭").performClick()
         compose.onNodeWithText("第 2 周").performClick()
         compose.onNodeWithTag("week_choice_1").performClick()
@@ -91,7 +94,7 @@ class ScheduleUiTest {
         compose.onNodeWithText("更换 / 解绑课表账号").performScrollTo().performClick()
         compose.onNodeWithText("取消", substring = false).performClick()
         compose.onNodeWithText("资费", substring = false).performClick()
-        compose.onNodeWithText("校园网账号：测试校园网 · fa••••er").assertExists()
+        compose.onNodeWithTag("billing_account").assertTextEquals("测试校园网 · fa••••er")
     }
 
     private fun screenshot(name: String) {

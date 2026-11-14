@@ -23,7 +23,7 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
     var name by rememberSaveable(context.token) { mutableStateOf(course?.name.orEmpty()) }
     var location by rememberSaveable(context.token) { mutableStateOf(course?.location.orEmpty()) }
     var teacher by rememberSaveable(context.token) { mutableStateOf(course?.teacher.orEmpty()) }
-    var weekday by rememberSaveable(context.token) { mutableIntStateOf(context.defaultWeekday) }
+    var weekdays by rememberSaveable(context.token) { mutableStateOf(listOf(context.defaultWeekday)) }
     var sources by rememberSaveable(context.token) { mutableStateOf(listOf(context.defaultWeek)) }
     var targets by rememberSaveable(context.token) { mutableStateOf(listOf(context.defaultWeek).filter { it <= context.weekCount }) }
     var first by rememberSaveable(context.token) { mutableStateOf((course?.lessons?.minOrNull() ?: 1).toString()) }
@@ -38,9 +38,9 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
     val lessonEnd = last.toIntOrNull()
     val validLessons = lessonStart != null && lessonEnd != null && lessonStart in 1..20 && lessonEnd in lessonStart..20
     val valid = if (context.deleteOnly) sources.isNotEmpty() else name.isNotBlank() && count.toIntOrNull() in 1..60 &&
-        targets.isNotEmpty() && targets.all { it in 1..weeks } && (validLessons || (course != null && !rangeChanged)) &&
+        weekdays.isNotEmpty() && targets.isNotEmpty() && targets.all { it in 1..weeks } && (validLessons || (course != null && !rangeChanged)) &&
         runCatching { LocalDate.parse(monday).dayOfWeek.value == 1 }.getOrDefault(false)
-    fun draft() = CourseDraft(name, location, teacher, weekday, sources, targets,
+    fun draft() = CourseDraft(name, location, teacher, weekdays, sources, targets,
         if (course != null && !rangeChanged) course.lessons else if (validLessons) (lessonStart!!..lessonEnd!!).toList() else emptyList(), monday, weeks)
 
     if (picker) {
@@ -82,7 +82,11 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
                     Text(if (course == null) "上课安排" else "调整后的安排", style = MaterialTheme.typography.titleSmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日").forEachIndexed { index, label ->
-                            FilterChip(weekday == index + 1, { weekday = index + 1 }, { Text(label) }, enabled = !saving,
+                            val day = index + 1
+                            FilterChip(day in weekdays, {
+                                weekdays = if (course?.source == CourseSource.SCHOOL) listOf(day)
+                                else if (day in weekdays) weekdays - day else (weekdays + day).sorted()
+                            }, { Text(label) }, enabled = !saving,
                                 modifier = Modifier.testTag("course_day_${index + 1}"))
                         }
                     }

@@ -8,7 +8,7 @@ import org.junit.Test
 class LocalCoursesTest {
     private fun draft(context: CourseEditContext, name: String = "自定义实验", source: List<Int> = listOf(context.defaultWeek),
         target: List<Int> = listOf(1, 2), day: Int = 2, lessons: List<Int> = listOf(3, 4)) =
-        CourseDraft(name, "", "", day, source, target, lessons, context.firstMonday, context.weekCount)
+        CourseDraft(name, "", "", listOf(day), source, target, lessons, context.firstMonday, context.weekCount)
     private fun add(repo: ScheduleRepository): ScheduleData {
         val context = repo.snapshot().courseEditor()
         return repo.edit(context, draft(context))
@@ -159,5 +159,37 @@ class LocalCoursesTest {
         val refreshed = imported(repo)
         assertEquals(created, refreshed.localTerms.single())
         assertTrue(refreshed.display()!!.weeks.all { w -> w.courses.none { it.source == CourseSource.CUSTOM } })
+    }
+    @Test fun multipleWeekdaysPersistEverySelectedWeekDayWithoutDuplicates() {
+        val store = ScheduleMemoryStore(); val keys = ScheduleMemoryKeys(); val repo = repository(store, keys)
+        val context = repo.snapshot().courseEditor()
+        val result = repo.edit(context, draft(context, target = listOf(1, 3)).copy(weekdays = listOf(1, 3, 7)))
+        val course = result.localTerms.single().courses.single()
+        assertEquals(listOf(1 to 1, 1 to 3, 1 to 7, 3 to 1, 3 to 3, 3 to 7),
+            course.occurrences.map { it.week to it.weekday })
+        val restored = ScheduleRepository(store, AesGcmVaultCipher(keys)).load()
+        assertEquals(result, restored)
+        assertEquals(6, restored.display()!!.weeks.sumOf { it.courses.size })
+        assertEquals(3, restored.display()!!.weeks[0].courses.map { it.date }.distinct().size)
+    }
+    @Test fun editingOneWeekdayRetainsOtherDaysAndDeduplicatesExistingTargets() {
+        val repo = repository(); val context = repo.snapshot().courseEditor()
+        repo.edit(context, draft(context).copy(weekdays = listOf(1, 3)))
+        val firstMonday = repo.snapshot().display()!!.weeks[0].courses.first()
+        val edit = repo.snapshot().courseEditor(firstMonday)
+        val changed = repo.edit(edit, draft(edit, target = listOf(1)).copy(weekdays = listOf(1, 3, 5)))
+        assertEquals(firstMonday.id, changed.localTerms.single().courses.single().id)
+        assertEquals(listOf(1 to 1, 1 to 3, 1 to 5, 2 to 1, 2 to 3),
+            changed.localTerms.single().courses.single().occurrences.map { it.week to it.weekday })
+        val delete = changed.courseEditor(changed.display()!!.weeks[0].courses.first(), deleteOnly = true)
+        val deleted = repo.edit(delete, draft(delete))
+        assertEquals(listOf(1 to 3, 1 to 5, 2 to 1, 2 to 3), deleted.localTerms.single().courses.single().occurrences.map { it.week to it.weekday })
+    }
+    @Test fun emptyInvalidOrDuplicateWeekdaysAreRejectedBeforeWriting() {
+        val repo = repository(); val context = repo.snapshot().courseEditor()
+        for (days in listOf(emptyList(), listOf(0), listOf(8), listOf(1, 1))) {
+            assertThrows(CourseValidationException::class.java) { repo.edit(context, draft(context).copy(weekdays = days)) }
+            assertTrue(repo.snapshot().localTerms.isEmpty())
+        }
     }
 }
